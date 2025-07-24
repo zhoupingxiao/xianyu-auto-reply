@@ -650,7 +650,7 @@ class XianyuLive:
             if result:
                 return result
 
-            logger.warning("所有方法都未能提取到商品ID")
+            logger.debug("所有方法都未能提取到商品ID")
             return None
 
         except Exception as e:
@@ -712,6 +712,105 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"获取默认回复失败: {self._safe_str(e)}")
             return None
+
+    async def get_keyword_reply(self, send_user_name: str, send_user_id: str, send_message: str) -> str:
+        """获取关键词匹配回复"""
+        try:
+            from db_manager import db_manager
+
+            # 获取当前账号的关键词列表
+            keywords = db_manager.get_keywords(self.cookie_id)
+
+            if not keywords:
+                logger.debug(f"账号 {self.cookie_id} 没有配置关键词")
+                return None
+
+            # 遍历关键词，查找匹配
+            for keyword, reply in keywords:
+                if keyword.lower() in send_message.lower():
+                    # 进行变量替换
+                    try:
+                        formatted_reply = reply.format(
+                            send_user_name=send_user_name,
+                            send_user_id=send_user_id,
+                            send_message=send_message
+                        )
+                        logger.info(f"关键词匹配成功: '{keyword}' -> {formatted_reply}")
+                        return f"[关键词回复] {formatted_reply}"
+                    except Exception as format_error:
+                        logger.error(f"关键词回复变量替换失败: {self._safe_str(format_error)}")
+                        # 如果变量替换失败，返回原始内容
+                        return f"[关键词回复] {reply}"
+
+            logger.debug(f"未找到匹配的关键词: {send_message}")
+            return None
+
+        except Exception as e:
+            logger.error(f"获取关键词回复失败: {self._safe_str(e)}")
+            return None
+
+    async def get_ai_reply(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str, chat_id: str):
+        """获取AI回复"""
+        try:
+            from ai_reply_engine import ai_reply_engine
+
+            # 检查是否启用AI回复
+            if not ai_reply_engine.is_ai_enabled(self.cookie_id):
+                logger.debug(f"账号 {self.cookie_id} 未启用AI回复")
+                return None
+
+            # 从数据库获取商品信息
+            from db_manager import db_manager
+            item_info_raw = db_manager.get_item_info(self.cookie_id, item_id)
+
+            if not item_info_raw:
+                logger.debug(f"数据库中无商品信息: {item_id}")
+                # 使用默认商品信息
+                item_info = {
+                    'title': '商品信息获取失败',
+                    'price': 0,
+                    'desc': '暂无商品描述'
+                }
+            else:
+                # 解析数据库中的商品信息
+                item_info = {
+                    'title': item_info_raw.get('item_title', '未知商品'),
+                    'price': self._parse_price(item_info_raw.get('item_price', '0')),
+                    'desc': item_info_raw.get('item_description', '暂无商品描述')
+                }
+
+            # 生成AI回复
+            reply = ai_reply_engine.generate_reply(
+                message=send_message,
+                item_info=item_info,
+                chat_id=chat_id,
+                cookie_id=self.cookie_id,
+                user_id=send_user_id,
+                item_id=item_id
+            )
+
+            if reply:
+                logger.info(f"AI回复生成成功: {reply}")
+                return f"[AI回复] {reply}"
+            else:
+                logger.debug(f"AI回复生成失败")
+                return None
+
+        except Exception as e:
+            logger.error(f"获取AI回复失败: {self._safe_str(e)}")
+            return None
+
+    def _parse_price(self, price_str: str) -> float:
+        """解析价格字符串为数字"""
+        try:
+            if not price_str:
+                return 0.0
+            # 移除非数字字符，保留小数点
+            import re
+            price_clean = re.sub(r'[^\d.]', '', str(price_str))
+            return float(price_clean) if price_clean else 0.0
+        except:
+            return 0.0
 
     async def send_notification(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str = None):
         """发送消息通知"""
@@ -911,11 +1010,11 @@ class XianyuLive:
                                 logger.warning(f"数据库中商品标题和详情都为空，且无法从API获取: {item_id}")
                                 search_text = item_title or item_id
                         else:
-                            logger.warning(f"数据库中未找到商品信息: {item_id}")
+                            logger.debug(f"数据库中未找到商品信息: {item_id}")
                             search_text = item_title or item_id
 
                     except Exception as db_e:
-                        logger.warning(f"从数据库获取商品信息失败: {self._safe_str(db_e)}")
+                        logger.debug(f"从数据库获取商品信息失败: {self._safe_str(db_e)}")
                         search_text = item_title or item_id
 
             if not search_text:
@@ -1499,7 +1598,7 @@ class XianyuLive:
                 else:
                     user_id = "unknown_user"
             except Exception as e:
-                logger.warning(f"提取用户ID失败: {self._safe_str(e)}")
+                logger.debug(f"提取用户ID失败: {self._safe_str(e)}")
                 user_id = "unknown_user"
 
             # 安全地获取商品ID
@@ -1542,7 +1641,7 @@ class XianyuLive:
 
                 if not item_id:
                     item_id = f"auto_{user_id}_{int(time.time())}"
-                    logger.warning(f"无法提取商品ID，使用默认值: {item_id}")
+                    logger.debug(f"无法提取商品ID，使用默认值: {item_id}")
 
             except Exception as e:
                 logger.error(f"提取商品ID时发生错误: {self._safe_str(e)}")
@@ -1719,10 +1818,20 @@ class XianyuLive:
             # 记录回复来源
             reply_source = 'API'  # 默认假设是API回复
 
-            # 如果API回复失败或未启用API，尝试使用默认回复
+            # 如果API回复失败或未启用API，尝试使用AI回复
             if not reply:
-                reply = await self.get_default_reply(send_user_name, send_user_id, send_message)
-                reply_source = '默认'  # 标记为默认回复
+                reply = await self.get_ai_reply(send_user_name, send_user_id, send_message, item_id, chat_id)
+                if reply:
+                    reply_source = 'AI'  # 标记为AI回复
+                else:
+                    # 如果AI回复也失败，尝试关键词匹配
+                    reply = await self.get_keyword_reply(send_user_name, send_user_id, send_message)
+                    if reply:
+                        reply_source = '关键词'  # 标记为关键词回复
+                    else:
+                        # 最后尝试使用默认回复
+                        reply = await self.get_default_reply(send_user_name, send_user_id, send_message)
+                        reply_source = '默认'  # 标记为默认回复
 
             # 保存商品信息到数据库（记录通知时传递的item_id）
             if item_id:

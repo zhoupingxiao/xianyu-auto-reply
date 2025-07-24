@@ -16,6 +16,7 @@ import uvicorn
 import cookie_manager
 from db_manager import db_manager
 from file_log_collector import setup_file_logging, get_file_log_collector
+from ai_reply_engine import ai_reply_engine
 
 # 关键字文件路径
 KEYWORDS_FILE = Path(__file__).parent / "回复关键字.txt"
@@ -1034,6 +1035,17 @@ class BatchDeleteRequest(BaseModel):
     items: List[dict]  # [{"cookie_id": "xxx", "item_id": "yyy"}, ...]
 
 
+class AIReplySettings(BaseModel):
+    ai_enabled: bool
+    model_name: str = "qwen-plus"
+    api_key: str = ""
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    max_discount_percent: int = 10
+    max_discount_amount: int = 100
+    max_bargain_rounds: int = 3
+    custom_prompts: str = ""
+
+
 @app.delete("/items/batch")
 def batch_delete_items(
     request: BatchDeleteRequest,
@@ -1055,6 +1067,110 @@ def batch_delete_items(
         }
     except Exception as e:
         logger.error(f"批量删除商品信息异常: {e}")
+        raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
+
+
+# ==================== AI回复管理API ====================
+
+@app.get("/ai-reply-settings/{cookie_id}")
+def get_ai_reply_settings(cookie_id: str, _: None = Depends(require_auth)):
+    """获取指定账号的AI回复设置"""
+    try:
+        settings = db_manager.get_ai_reply_settings(cookie_id)
+        return settings
+    except Exception as e:
+        logger.error(f"获取AI回复设置异常: {e}")
+        raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
+
+
+@app.put("/ai-reply-settings/{cookie_id}")
+def update_ai_reply_settings(cookie_id: str, settings: AIReplySettings, _: None = Depends(require_auth)):
+    """更新指定账号的AI回复设置"""
+    try:
+        # 检查账号是否存在
+        if cookie_manager.manager is None:
+            raise HTTPException(status_code=500, detail='CookieManager 未就绪')
+
+        if cookie_id not in cookie_manager.manager.cookies:
+            raise HTTPException(status_code=404, detail='账号不存在')
+
+        # 保存设置
+        settings_dict = settings.dict()
+        success = db_manager.save_ai_reply_settings(cookie_id, settings_dict)
+
+        if success:
+            # 清理客户端缓存，强制重新创建
+            ai_reply_engine.clear_client_cache(cookie_id)
+
+            # 如果启用了AI回复，记录日志
+            if settings.ai_enabled:
+                logger.info(f"账号 {cookie_id} 启用AI回复")
+            else:
+                logger.info(f"账号 {cookie_id} 禁用AI回复")
+
+            return {"message": "AI回复设置更新成功"}
+        else:
+            raise HTTPException(status_code=400, detail="更新失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新AI回复设置异常: {e}")
+        raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
+
+
+@app.get("/ai-reply-settings")
+def get_all_ai_reply_settings(_: None = Depends(require_auth)):
+    """获取所有账号的AI回复设置"""
+    try:
+        settings = db_manager.get_all_ai_reply_settings()
+        return settings
+    except Exception as e:
+        logger.error(f"获取所有AI回复设置异常: {e}")
+        raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
+
+
+@app.post("/ai-reply-test/{cookie_id}")
+def test_ai_reply(cookie_id: str, test_data: dict, _: None = Depends(require_auth)):
+    """测试AI回复功能"""
+    try:
+        # 检查账号是否存在
+        if cookie_manager.manager is None:
+            raise HTTPException(status_code=500, detail='CookieManager 未就绪')
+
+        if cookie_id not in cookie_manager.manager.cookies:
+            raise HTTPException(status_code=404, detail='账号不存在')
+
+        # 检查是否启用AI回复
+        if not ai_reply_engine.is_ai_enabled(cookie_id):
+            raise HTTPException(status_code=400, detail='该账号未启用AI回复')
+
+        # 构造测试数据
+        test_message = test_data.get('message', '你好')
+        test_item_info = {
+            'title': test_data.get('item_title', '测试商品'),
+            'price': test_data.get('item_price', 100),
+            'desc': test_data.get('item_desc', '这是一个测试商品')
+        }
+
+        # 生成测试回复
+        reply = ai_reply_engine.generate_reply(
+            message=test_message,
+            item_info=test_item_info,
+            chat_id=f"test_{int(time.time())}",
+            cookie_id=cookie_id,
+            user_id="test_user",
+            item_id="test_item"
+        )
+
+        if reply:
+            return {"message": "测试成功", "reply": reply}
+        else:
+            raise HTTPException(status_code=400, detail="AI回复生成失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试AI回复异常: {e}")
         raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}")
 
 

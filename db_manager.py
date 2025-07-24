@@ -81,6 +81,52 @@ class DBManager:
             )
             ''')
 
+            # 创建AI回复配置表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_reply_settings (
+                cookie_id TEXT PRIMARY KEY,
+                ai_enabled BOOLEAN DEFAULT FALSE,
+                model_name TEXT DEFAULT 'qwen-plus',
+                api_key TEXT,
+                base_url TEXT DEFAULT 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                max_discount_percent INTEGER DEFAULT 10,
+                max_discount_amount INTEGER DEFAULT 100,
+                max_bargain_rounds INTEGER DEFAULT 3,
+                custom_prompts TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE
+            )
+            ''')
+
+            # 创建AI对话历史表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cookie_id TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                intent TEXT,
+                bargain_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cookie_id) REFERENCES cookies (id) ON DELETE CASCADE
+            )
+            ''')
+
+            # 创建AI商品信息缓存表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_item_cache (
+                item_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                price REAL,
+                description TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
             # 创建卡券表
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS cards (
@@ -394,6 +440,117 @@ class DBManager:
                 logger.error(f"获取所有Cookie状态失败: {e}")
                 return {}
 
+    # -------------------- AI回复设置操作 --------------------
+    def save_ai_reply_settings(self, cookie_id: str, settings: dict) -> bool:
+        """保存AI回复设置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                INSERT OR REPLACE INTO ai_reply_settings
+                (cookie_id, ai_enabled, model_name, api_key, base_url,
+                 max_discount_percent, max_discount_amount, max_bargain_rounds,
+                 custom_prompts, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (
+                    cookie_id,
+                    settings.get('ai_enabled', False),
+                    settings.get('model_name', 'qwen-plus'),
+                    settings.get('api_key', ''),
+                    settings.get('base_url', 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
+                    settings.get('max_discount_percent', 10),
+                    settings.get('max_discount_amount', 100),
+                    settings.get('max_bargain_rounds', 3),
+                    settings.get('custom_prompts', '')
+                ))
+                self.conn.commit()
+                logger.debug(f"AI回复设置保存成功: {cookie_id}")
+                return True
+            except Exception as e:
+                logger.error(f"保存AI回复设置失败: {e}")
+                self.conn.rollback()
+                return False
+
+    def get_ai_reply_settings(self, cookie_id: str) -> dict:
+        """获取AI回复设置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT ai_enabled, model_name, api_key, base_url,
+                       max_discount_percent, max_discount_amount, max_bargain_rounds,
+                       custom_prompts
+                FROM ai_reply_settings WHERE cookie_id = ?
+                ''', (cookie_id,))
+
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        'ai_enabled': bool(result[0]),
+                        'model_name': result[1],
+                        'api_key': result[2],
+                        'base_url': result[3],
+                        'max_discount_percent': result[4],
+                        'max_discount_amount': result[5],
+                        'max_bargain_rounds': result[6],
+                        'custom_prompts': result[7]
+                    }
+                else:
+                    # 返回默认设置
+                    return {
+                        'ai_enabled': False,
+                        'model_name': 'qwen-plus',
+                        'api_key': '',
+                        'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                        'max_discount_percent': 10,
+                        'max_discount_amount': 100,
+                        'max_bargain_rounds': 3,
+                        'custom_prompts': ''
+                    }
+            except Exception as e:
+                logger.error(f"获取AI回复设置失败: {e}")
+                return {
+                    'ai_enabled': False,
+                    'model_name': 'qwen-plus',
+                    'api_key': '',
+                    'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                    'max_discount_percent': 10,
+                    'max_discount_amount': 100,
+                    'max_bargain_rounds': 3,
+                    'custom_prompts': ''
+                }
+
+    def get_all_ai_reply_settings(self) -> Dict[str, dict]:
+        """获取所有账号的AI回复设置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT cookie_id, ai_enabled, model_name, api_key, base_url,
+                       max_discount_percent, max_discount_amount, max_bargain_rounds,
+                       custom_prompts
+                FROM ai_reply_settings
+                ''')
+
+                result = {}
+                for row in cursor.fetchall():
+                    cookie_id = row[0]
+                    result[cookie_id] = {
+                        'ai_enabled': bool(row[1]),
+                        'model_name': row[2],
+                        'api_key': row[3],
+                        'base_url': row[4],
+                        'max_discount_percent': row[5],
+                        'max_discount_amount': row[6],
+                        'max_bargain_rounds': row[7],
+                        'custom_prompts': row[8]
+                    }
+
+                return result
+            except Exception as e:
+                logger.error(f"获取所有AI回复设置失败: {e}")
+                return {}
+
     # -------------------- 默认回复操作 --------------------
     def save_default_reply(self, cookie_id: str, enabled: bool, reply_content: str = None):
         """保存默认回复设置"""
@@ -693,7 +850,8 @@ class DBManager:
                 tables = [
                     'cookies', 'keywords', 'cookie_status', 'cards',
                     'delivery_rules', 'default_replies', 'notification_channels',
-                    'message_notifications', 'system_settings', 'item_info'
+                    'message_notifications', 'system_settings', 'item_info',
+                    'ai_reply_settings', 'ai_conversations', 'ai_item_cache'
                 ]
 
                 for table in tables:
@@ -729,7 +887,8 @@ class DBManager:
                 # 注意：按照外键依赖关系的逆序删除
                 tables = [
                     'message_notifications', 'notification_channels', 'default_replies',
-                    'delivery_rules', 'cards', 'item_info', 'cookie_status', 'keywords', 'cookies'
+                    'delivery_rules', 'cards', 'item_info', 'cookie_status', 'keywords',
+                    'ai_conversations', 'ai_reply_settings', 'ai_item_cache', 'cookies'
                 ]
 
                 for table in tables:
@@ -743,7 +902,8 @@ class DBManager:
                 for table_name, table_data in data.items():
                     if table_name not in ['cookies', 'keywords', 'cookie_status', 'cards',
                                         'delivery_rules', 'default_replies', 'notification_channels',
-                                        'message_notifications', 'system_settings', 'item_info']:
+                                        'message_notifications', 'system_settings', 'item_info',
+                                        'ai_reply_settings', 'ai_conversations', 'ai_item_cache']:
                         continue
 
                     columns = table_data['columns']
