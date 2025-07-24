@@ -84,7 +84,46 @@
 
 ## 🚀 快速开始
 
-### 方式一：Docker 部署（推荐）
+> 💡 **推荐使用Docker镜像部署，无需配置环境，一键启动！**
+
+### 🐳 方式一：Docker 镜像部署（推荐）
+
+**使用预构建的Docker镜像，一键启动：**
+
+```bash
+docker run -d -p 8080:8080 --name xianyu-auto-reply --privileged=true registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0
+```
+
+**特点：**
+- ✅ **零配置**：无需安装Python环境和依赖
+- ✅ **即开即用**：一条命令启动完整系统
+- ✅ **稳定可靠**：经过测试的稳定版本
+- ✅ **自动更新**：支持数据持久化和版本升级
+
+**访问系统：**
+- 🌐 Web界面：http://localhost:8080
+- 👤 默认账号：admin / admin123
+- 📖 API文档：http://localhost:8080/docs
+
+**常用管理命令：**
+```bash
+# 查看容器状态
+docker ps
+
+# 查看容器日志
+docker logs xianyu-auto-reply
+
+# 重启容器
+docker restart xianyu-auto-reply
+
+# 停止容器
+docker stop xianyu-auto-reply
+
+# 删除容器
+docker rm xianyu-auto-reply
+```
+
+### 方式二：Docker 源码部署
 
 1. **克隆项目**
    ```bash
@@ -101,7 +140,7 @@
    - 打开浏览器访问：http://localhost:8080
    - 默认账号：admin / admin123
 
-### 方式二：本地部署
+### 方式三：本地部署
 
 1. **安装依赖**
    ```bash
@@ -232,6 +271,32 @@ xianyu-auto-reply/
 - 🧪 **测试用例**：添加或改进测试
 
 详细信息请参考：[贡献指南](CONTRIBUTING.md)
+
+## 💬 社区交流
+
+### 加入我们的交流群
+
+<div align="center">
+
+| 微信交流群 | QQ交流群 |
+|:---:|:---:|
+| <img src="https://img.zhinianboke.com/img/5527" width="200" alt="微信群二维码"> | <img src="https://img.zhinianboke.com/img/5526" width="200" alt="QQ群二维码"> |
+| 扫码加入微信群 | 扫码加入QQ群 |
+
+</div>
+
+### 交流内容
+- 💡 **功能讨论**：新功能建议和讨论
+- 🐛 **问题求助**：使用过程中遇到的问题
+- 📚 **经验分享**：使用技巧和最佳实践
+- 🔄 **版本更新**：最新版本发布通知
+- 🤝 **合作交流**：开发合作和技术交流
+
+### 群规说明
+- 请保持友善和尊重的交流氛围
+- 优先使用搜索功能查找已有答案
+- 提问时请提供详细的问题描述和环境信息
+- 欢迎分享使用经验和改进建议
 
 ## 📄 许可证
 
