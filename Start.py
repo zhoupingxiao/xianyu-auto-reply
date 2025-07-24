@@ -9,6 +9,7 @@ import os
 import asyncio
 import threading
 import uvicorn
+import time
 from urllib.parse import urlparse
 from pathlib import Path
 from loguru import logger
@@ -17,6 +18,36 @@ from config import AUTO_REPLY, COOKIES_LIST
 import cookie_manager as cm
 from db_manager import db_manager
 from file_log_collector import setup_file_logging
+
+# 配置统一的日志系统
+log_dir = 'logs'
+os.makedirs(log_dir, exist_ok=True)
+log_path = os.path.join(log_dir, f"xianyu_{time.strftime('%Y-%m-%d')}.log")
+
+# 移除默认的日志处理器
+logger.remove()
+
+# 导入日志过滤器
+try:
+    from log_filter import filter_log_record
+except ImportError:
+    # 如果过滤器不可用，使用默认过滤器
+    def filter_log_record(record):
+        return True
+
+# 添加文件日志处理器，使用统一格式，并应用过滤器
+logger.add(
+    log_path,
+    rotation="1 day",
+    retention="7 days",
+    compression="zip",
+    level="INFO",
+    format='{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} - {message}',
+    encoding='utf-8',
+    enqueue=False,  # 立即写入
+    buffering=1,    # 行缓冲
+    filter=filter_log_record  # 应用日志过滤器
+)
 
 
 def _start_api_server():

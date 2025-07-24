@@ -281,7 +281,7 @@ xianyu-auto-reply/
 
 | 微信交流群 | QQ交流群 |
 |:---:|:---:|
-| <img src="https://img.zhinianboke.com/img/5527" width="200" alt="微信群二维码"> | <img src="https://img.zhinianboke.com/img/5526" width="200" alt="QQ群二维码"> |
+| <img src="images/wechat-group.jpg" width="200" alt="微信群二维码"> | <img src="images/qq-group.jpg" width="200" alt="QQ群二维码"> |
 | 扫码加入微信群 | 扫码加入QQ群 |
 
 </div>

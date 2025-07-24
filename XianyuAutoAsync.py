@@ -20,26 +20,34 @@ from utils.ws_utils import WebSocketClient
 import sys
 import aiohttp
 
-# 日志配置
+# 日志配置 - 统一日志文件
 log_dir = 'logs'
 os.makedirs(log_dir, exist_ok=True)
 log_path = os.path.join(log_dir, f"xianyu_{time.strftime('%Y-%m-%d')}.log")
+
+# 移除所有现有的日志处理器
 logger.remove()
+
+# 导入日志过滤器
+try:
+    from log_filter import filter_log_record
+except ImportError:
+    # 如果过滤器不可用，使用默认过滤器
+    def filter_log_record(record):
+        return True
+
+# 只添加文件日志处理器，使用统一格式便于解析，并应用过滤器
 logger.add(
     log_path,
     rotation=LOG_CONFIG.get('rotation', '1 day'),
     retention=LOG_CONFIG.get('retention', '7 days'),
     compression=LOG_CONFIG.get('compression', 'zip'),
     level=LOG_CONFIG.get('level', 'INFO'),
-    format=LOG_CONFIG.get('format', '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'),
+    format='{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} - {message}',
     encoding='utf-8',
-    enqueue=True
-)
-logger.add(
-    sys.stdout,
-    level=LOG_CONFIG.get('level', 'INFO'),
-    format=LOG_CONFIG.get('format', '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'),
-    enqueue=True
+    enqueue=False,  # 改为False，确保立即写入
+    buffering=1,    # 行缓冲，立即刷新到文件
+    filter=filter_log_record  # 应用日志过滤器
 )
 
 class XianyuLive:

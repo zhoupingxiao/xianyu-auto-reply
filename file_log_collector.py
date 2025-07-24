@@ -29,119 +29,167 @@ class FileLogCollector:
     
     def setup_file_monitoring(self):
         """设置文件监控"""
-        # 查找日志文件
+        # 使用统一的日志文件路径
+        import time
+        log_dir = 'logs'
+        os.makedirs(log_dir, exist_ok=True)
+
+        # 使用与其他模块相同的日志文件命名规则
+        today_log = os.path.join(log_dir, f"xianyu_{time.strftime('%Y-%m-%d')}.log")
+
+        # 查找日志文件，优先使用今天的日志文件
         possible_files = [
-            "xianyu.log",
-            "app.log", 
-            "system.log",
+            today_log,
             "logs/xianyu.log",
+            "xianyu.log",
+            "app.log",
+            "system.log",
             "logs/app.log"
         ]
-        
+
         for file_path in possible_files:
             if os.path.exists(file_path):
                 self.log_file = file_path
                 break
-        
+
         if not self.log_file:
-            # 如果没有找到现有文件，创建一个新的
-            self.log_file = "realtime.log"
-            
-        # 设置loguru输出到文件
-        self.setup_loguru_file_output()
-        
+            # 如果没有找到现有文件，使用今天的日志文件
+            self.log_file = today_log
+
+        print(f"日志收集器监控文件: {self.log_file}")
+
         # 启动文件监控线程
         self.monitor_thread = threading.Thread(target=self.monitor_file, daemon=True)
         self.monitor_thread.start()
     
-    def setup_loguru_file_output(self):
-        """设置loguru输出到文件"""
-        try:
-            from loguru import logger
-            
-            # 添加文件输出
-            logger.add(
-                self.log_file,
-                format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} - {message}",
-                level="DEBUG",
-                rotation="10 MB",
-                retention="7 days",
-                enqueue=False,  # 改为False，避免队列延迟
-                buffering=1     # 行缓冲，立即写入
-            )
-            
-            logger.info("文件日志收集器已启动")
-            
-        except ImportError:
-            pass
+
     
     def monitor_file(self):
         """监控日志文件变化"""
+        print(f"开始监控日志文件: {self.log_file}")
+
         while True:
             try:
                 if os.path.exists(self.log_file):
                     # 获取文件大小
                     file_size = os.path.getsize(self.log_file)
-                    
+
                     if file_size > self.last_position:
                         # 读取新增内容
-                        with open(self.log_file, 'r', encoding='utf-8') as f:
-                            f.seek(self.last_position)
-                            new_lines = f.readlines()
-                            self.last_position = f.tell()
-                        
-                        # 解析新增的日志行
-                        for line in new_lines:
-                            self.parse_log_line(line.strip())
-                
-                time.sleep(0.5)  # 每0.5秒检查一次
-                
+                        try:
+                            with open(self.log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                f.seek(self.last_position)
+                                new_lines = f.readlines()
+                                self.last_position = f.tell()
+
+                            # 解析新增的日志行
+                            for line in new_lines:
+                                line = line.strip()
+                                if line:  # 只处理非空行
+                                    self.parse_log_line(line)
+                        except Exception as read_error:
+                            print(f"读取日志文件失败: {read_error}")
+                    elif file_size < self.last_position:
+                        # 文件被截断或重新创建，重置位置
+                        self.last_position = 0
+                        print(f"检测到日志文件被重置: {self.log_file}")
+                else:
+                    # 文件不存在，重置位置等待文件创建
+                    self.last_position = 0
+
+                time.sleep(0.2)  # 每0.2秒检查一次，更及时
+
             except Exception as e:
+                print(f"监控日志文件异常: {e}")
                 time.sleep(1)  # 出错时等待1秒
     
     def parse_log_line(self, line: str):
         """解析日志行"""
         if not line:
             return
-        
+
         try:
-            # 解析loguru格式的日志
-            # 格式: 2025-07-23 15:46:03.430 | INFO | __main__:debug_collector:70 - 消息
+            # 解析统一格式的日志
+            # 格式: 2024-07-24 15:46:03.430 | INFO | module_name:function_name:123 - 消息内容
             pattern = r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \| (\w+) \| ([^:]+):([^:]+):(\d+) - (.*)'
             match = re.match(pattern, line)
-            
+
             if match:
                 timestamp_str, level, source, function, line_num, message = match.groups()
-                
+
                 # 转换时间格式
                 try:
                     timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S.%f')
                 except:
                     timestamp = datetime.now()
-                
+
+                # 清理source名称，移除路径和扩展名
+                if '\\' in source or '/' in source:
+                    source = os.path.basename(source)
+                if source.endswith('.py'):
+                    source = source[:-3]
+
                 log_entry = {
                     "timestamp": timestamp.isoformat(),
-                    "level": level,
-                    "source": source,
-                    "function": function,
+                    "level": level.strip(),
+                    "source": source.strip(),
+                    "function": function.strip(),
                     "line": int(line_num),
-                    "message": message
+                    "message": message.strip()
                 }
-                
+
                 with self.lock:
                     self.logs.append(log_entry)
-            
+
+            else:
+                # 尝试解析其他可能的格式
+                # 简单格式: [时间] [级别] 消息
+                simple_pattern = r'\[([^\]]+)\] \[(\w+)\] (.*)'
+                simple_match = re.match(simple_pattern, line)
+
+                if simple_match:
+                    timestamp_str, level, message = simple_match.groups()
+                    try:
+                        timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                    except:
+                        timestamp = datetime.now()
+
+                    log_entry = {
+                        "timestamp": timestamp.isoformat(),
+                        "level": level.strip(),
+                        "source": "system",
+                        "function": "unknown",
+                        "line": 0,
+                        "message": message.strip()
+                    }
+
+                    with self.lock:
+                        self.logs.append(log_entry)
+                else:
+                    # 如果都解析失败，作为普通消息处理
+                    log_entry = {
+                        "timestamp": datetime.now().isoformat(),
+                        "level": "INFO",
+                        "source": "system",
+                        "function": "unknown",
+                        "line": 0,
+                        "message": line.strip()
+                    }
+
+                    with self.lock:
+                        self.logs.append(log_entry)
+
         except Exception as e:
             # 如果解析失败，作为普通消息处理
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
-                "level": "INFO",
-                "source": "system",
-                "function": "unknown",
+                "level": "ERROR",
+                "source": "log_parser",
+                "function": "parse_log_line",
                 "line": 0,
-                "message": line
+                "message": f"日志解析失败: {line} (错误: {str(e)})"
             }
-            
+
             with self.lock:
                 self.logs.append(log_entry)
     

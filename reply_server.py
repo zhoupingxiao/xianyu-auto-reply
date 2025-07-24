@@ -157,23 +157,84 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# 配置统一的日志系统
+import time
+from loguru import logger
+
+# 确保日志目录存在
+log_dir = 'logs'
+os.makedirs(log_dir, exist_ok=True)
+log_path = os.path.join(log_dir, f"xianyu_{time.strftime('%Y-%m-%d')}.log")
+
+# 移除默认的日志处理器
+logger.remove()
+
+# 导入日志过滤器
+try:
+    from log_filter import filter_log_record
+except ImportError:
+    # 如果过滤器不可用，使用默认过滤器
+    def filter_log_record(record):
+        return True
+
+# 添加文件日志处理器，使用与XianyuAutoAsync相同的格式，并应用过滤器
+logger.add(
+    log_path,
+    rotation="1 day",
+    retention="7 days",
+    compression="zip",
+    level="INFO",
+    format='{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} - {message}',
+    encoding='utf-8',
+    enqueue=False,  # 立即写入
+    buffering=1,    # 行缓冲
+    filter=filter_log_record  # 应用日志过滤器
+)
+
 # 初始化文件日志收集器
 setup_file_logging()
 
 # 添加一条测试日志
-from loguru import logger
-logger.info("Web服务器启动，文件日志收集器已初始化")
+logger.info("Web服务器启动，统一日志系统已初始化")
+
+# 不需要记录到文件的API路径
+EXCLUDED_LOG_PATHS = {
+    '/logs',
+    '/logs/stats',
+    '/logs/clear',
+    '/health',
+    '/docs',
+    '/redoc',
+    '/openapi.json',
+    '/favicon.ico'
+}
+
+# 不需要记录的路径前缀
+EXCLUDED_LOG_PREFIXES = {
+    '/static/',
+    '/docs',
+    '/redoc'
+}
 
 # 添加请求日志中间件
 @app.middleware("http")
 async def log_requests(request, call_next):
     start_time = time.time()
-    logger.info(f"🌐 API请求: {request.method} {request.url.path}")
+
+    # 检查是否需要记录日志
+    should_log = (
+        request.url.path not in EXCLUDED_LOG_PATHS and
+        not any(request.url.path.startswith(prefix) for prefix in EXCLUDED_LOG_PREFIXES)
+    )
+
+    if should_log:
+        logger.info(f"🌐 API请求: {request.method} {request.url.path}")
 
     response = await call_next(request)
 
-    process_time = time.time() - start_time
-    logger.info(f"✅ API响应: {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)")
+    if should_log:
+        process_time = time.time() - start_time
+        logger.info(f"✅ API响应: {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)")
 
     return response
 
