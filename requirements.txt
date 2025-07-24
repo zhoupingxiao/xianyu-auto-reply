@@ -1,0 +1,29 @@
+# Web框架和API相关
+fastapi>=0.111
+uvicorn[standard]>=0.29
+pydantic>=2.7
+
+# 日志记录
+loguru>=0.7
+
+# 网络通信
+websockets>=10.0,<13.0  # 兼容性版本范围
+aiohttp>=3.9
+
+# 配置文件处理
+PyYAML>=6.0
+
+# JavaScript执行引擎
+PyExecJS>=1.5.1
+
+# 协议缓冲区解析
+blackboxprotobuf>=1.0.1
+
+# 系统监控
+psutil>=5.9.0
+
+# HTTP客户端（用于测试）
+requests>=2.31.0
+
+# 文件上传支持
+python-multipart>=0.0.6
