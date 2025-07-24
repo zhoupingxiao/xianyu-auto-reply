@@ -1818,16 +1818,17 @@ class XianyuLive:
             # 记录回复来源
             reply_source = 'API'  # 默认假设是API回复
 
-            # 如果API回复失败或未启用API，尝试使用AI回复
+            # 如果API回复失败或未启用API，按优先级尝试其他回复方式
             if not reply:
-                reply = await self.get_ai_reply(send_user_name, send_user_id, send_message, item_id, chat_id)
+                # 优先尝试关键词匹配回复
+                reply = await self.get_keyword_reply(send_user_name, send_user_id, send_message)
                 if reply:
-                    reply_source = 'AI'  # 标记为AI回复
+                    reply_source = '关键词'  # 标记为关键词回复
                 else:
-                    # 如果AI回复也失败，尝试关键词匹配
-                    reply = await self.get_keyword_reply(send_user_name, send_user_id, send_message)
+                    # 如果关键词匹配失败，尝试AI回复
+                    reply = await self.get_ai_reply(send_user_name, send_user_id, send_message, item_id, chat_id)
                     if reply:
-                        reply_source = '关键词'  # 标记为关键词回复
+                        reply_source = 'AI'  # 标记为AI回复
                     else:
                         # 最后尝试使用默认回复
                         reply = await self.get_default_reply(send_user_name, send_user_id, send_message)
