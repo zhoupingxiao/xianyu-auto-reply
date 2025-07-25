@@ -157,84 +157,23 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# 配置统一的日志系统
-import time
-from loguru import logger
-
-# 确保日志目录存在
-log_dir = 'logs'
-os.makedirs(log_dir, exist_ok=True)
-log_path = os.path.join(log_dir, f"xianyu_{time.strftime('%Y-%m-%d')}.log")
-
-# 移除默认的日志处理器
-logger.remove()
-
-# 导入日志过滤器
-try:
-    from log_filter import filter_log_record
-except ImportError:
-    # 如果过滤器不可用，使用默认过滤器
-    def filter_log_record(record):
-        return True
-
-# 添加文件日志处理器，使用与XianyuAutoAsync相同的格式，并应用过滤器
-logger.add(
-    log_path,
-    rotation="1 day",
-    retention="7 days",
-    compression="zip",
-    level="INFO",
-    format='{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} - {message}',
-    encoding='utf-8',
-    enqueue=False,  # 立即写入
-    buffering=1,    # 行缓冲
-    filter=filter_log_record  # 应用日志过滤器
-)
-
 # 初始化文件日志收集器
 setup_file_logging()
 
 # 添加一条测试日志
-logger.info("Web服务器启动，统一日志系统已初始化")
-
-# 不需要记录到文件的API路径
-EXCLUDED_LOG_PATHS = {
-    '/logs',
-    '/logs/stats',
-    '/logs/clear',
-    '/health',
-    '/docs',
-    '/redoc',
-    '/openapi.json',
-    '/favicon.ico'
-}
-
-# 不需要记录的路径前缀
-EXCLUDED_LOG_PREFIXES = {
-    '/static/',
-    '/docs',
-    '/redoc'
-}
+from loguru import logger
+logger.info("Web服务器启动，文件日志收集器已初始化")
 
 # 添加请求日志中间件
 @app.middleware("http")
 async def log_requests(request, call_next):
     start_time = time.time()
-
-    # 检查是否需要记录日志
-    should_log = (
-        request.url.path not in EXCLUDED_LOG_PATHS and
-        not any(request.url.path.startswith(prefix) for prefix in EXCLUDED_LOG_PREFIXES)
-    )
-
-    if should_log:
-        logger.info(f"🌐 API请求: {request.method} {request.url.path}")
+    logger.info(f"🌐 API请求: {request.method} {request.url.path}")
 
     response = await call_next(request)
 
-    if should_log:
-        process_time = time.time() - start_time
-        logger.info(f"✅ API响应: {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)")
+    process_time = time.time() - start_time
+    logger.info(f"✅ API响应: {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)")
 
     return response
 
@@ -1008,6 +947,15 @@ def import_backup(file: UploadFile = File(...), _: None = Depends(require_auth))
         success = db_manager.import_backup(backup_data)
 
         if success:
+            # 备份导入成功后，刷新 CookieManager 的内存缓存
+            import cookie_manager
+            if cookie_manager.manager:
+                try:
+                    cookie_manager.manager.reload_from_db()
+                    logger.info("备份导入后已刷新 CookieManager 缓存")
+                except Exception as e:
+                    logger.error(f"刷新 CookieManager 缓存失败: {e}")
+
             return {"message": "备份导入成功"}
         else:
             raise HTTPException(status_code=400, detail="备份导入失败")
@@ -1016,6 +964,23 @@ def import_backup(file: UploadFile = File(...), _: None = Depends(require_auth))
         raise HTTPException(status_code=400, detail="备份文件格式无效")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"导入备份失败: {str(e)}")
+
+
+@app.post("/system/reload-cache")
+def reload_cache(_: None = Depends(require_auth)):
+    """重新加载系统缓存（用于手动刷新数据）"""
+    try:
+        import cookie_manager
+        if cookie_manager.manager:
+            success = cookie_manager.manager.reload_from_db()
+            if success:
+                return {"message": "系统缓存已刷新", "success": True}
+            else:
+                raise HTTPException(status_code=500, detail="缓存刷新失败")
+        else:
+            raise HTTPException(status_code=500, detail="CookieManager 未初始化")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"刷新缓存失败: {str(e)}")
 
 
 # ==================== 商品管理 API ====================
@@ -1302,9 +1267,9 @@ async def get_all_items_from_account(request: dict, _: None = Depends(require_au
         from XianyuAutoAsync import XianyuLive
         xianyu_instance = XianyuLive(cookies_str, cookie_id)
 
-        # 调用获取商品信息的方法
+        # 调用获取所有商品信息的方法（自动分页）
         logger.info(f"开始获取账号 {cookie_id} 的所有商品信息")
-        result = await xianyu_instance.get_item_list_info()
+        result = await xianyu_instance.get_all_items()
 
         # 关闭session
         await xianyu_instance.close_session()
@@ -1313,11 +1278,78 @@ async def get_all_items_from_account(request: dict, _: None = Depends(require_au
             logger.error(f"获取商品信息失败: {result['error']}")
             return {"success": False, "message": result['error']}
         else:
-            logger.info(f"成功获取账号 {cookie_id} 的 {result.get('total_count', 0)} 个商品")
+            total_count = result.get('total_count', 0)
+            total_pages = result.get('total_pages', 1)
+            logger.info(f"成功获取账号 {cookie_id} 的 {total_count} 个商品（共{total_pages}页）")
             return {
                 "success": True,
-                "message": f"成功获取 {result.get('total_count', 0)} 个商品，详细信息已打印到控制台",
-                "total_count": result.get('total_count', 0)
+                "message": f"成功获取 {total_count} 个商品（共{total_pages}页），详细信息已打印到控制台",
+                "total_count": total_count,
+                "total_pages": total_pages
+            }
+
+    except Exception as e:
+        logger.error(f"获取账号商品信息异常: {str(e)}")
+        return {"success": False, "message": f"获取商品信息异常: {str(e)}"}
+
+
+@app.post("/items/get-by-page")
+async def get_items_by_page(request: dict, _: None = Depends(require_auth)):
+    """从指定账号按页获取商品信息"""
+    try:
+        # 验证参数
+        cookie_id = request.get('cookie_id')
+        page_number = request.get('page_number', 1)
+        page_size = request.get('page_size', 20)
+
+        if not cookie_id:
+            return {"success": False, "message": "缺少cookie_id参数"}
+
+        # 验证分页参数
+        try:
+            page_number = int(page_number)
+            page_size = int(page_size)
+        except (ValueError, TypeError):
+            return {"success": False, "message": "页码和每页数量必须是数字"}
+
+        if page_number < 1:
+            return {"success": False, "message": "页码必须大于0"}
+
+        if page_size < 1 or page_size > 100:
+            return {"success": False, "message": "每页数量必须在1-100之间"}
+
+        # 获取账号信息
+        account = db_manager.get_cookie_by_id(cookie_id)
+        if not account:
+            return {"success": False, "message": "账号不存在"}
+
+        cookies_str = account['cookies_str']
+        if not cookies_str:
+            return {"success": False, "message": "账号cookies为空"}
+
+        # 创建XianyuLive实例，传入正确的cookie_id
+        from XianyuAutoAsync import XianyuLive
+        xianyu_instance = XianyuLive(cookies_str, cookie_id)
+
+        # 调用获取指定页商品信息的方法
+        logger.info(f"开始获取账号 {cookie_id} 第{page_number}页商品信息（每页{page_size}条）")
+        result = await xianyu_instance.get_item_list_info(page_number, page_size)
+
+        # 关闭session
+        await xianyu_instance.close_session()
+
+        if result.get('error'):
+            logger.error(f"获取商品信息失败: {result['error']}")
+            return {"success": False, "message": result['error']}
+        else:
+            current_count = result.get('current_count', 0)
+            logger.info(f"成功获取账号 {cookie_id} 第{page_number}页 {current_count} 个商品")
+            return {
+                "success": True,
+                "message": f"成功获取第{page_number}页 {current_count} 个商品，详细信息已打印到控制台",
+                "page_number": page_number,
+                "page_size": page_size,
+                "current_count": current_count
             }
 
     except Exception as e:

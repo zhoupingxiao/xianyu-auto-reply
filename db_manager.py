@@ -51,12 +51,39 @@ class DBManager:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = self.conn.cursor()
             
-            # 创建cookies表
+            # 创建用户表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            # 创建邮箱验证码表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS email_verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                code TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                used BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            # 创建cookies表（添加user_id字段）
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS cookies (
                 id TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                user_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             ''')
             
@@ -233,6 +260,29 @@ class DBManager:
             ('admin_password_hash', ?, '管理员密码哈希'),
             ('theme_color', 'blue', '主题颜色')
             ''', (hashlib.sha256("admin123".encode()).hexdigest(),))
+
+            # 创建默认admin用户
+            cursor.execute('''
+            INSERT OR IGNORE INTO users (username, email, password_hash) VALUES
+            ('admin', 'admin@localhost', ?)
+            ''', (hashlib.sha256("admin123".encode()).hexdigest(),))
+
+            # 获取admin用户ID，用于历史数据绑定
+            cursor.execute("SELECT id FROM users WHERE username = 'admin'")
+            admin_user = cursor.fetchone()
+            if admin_user:
+                admin_user_id = admin_user[0]
+
+                # 将历史cookies数据绑定到admin用户（如果user_id列不存在）
+                try:
+                    cursor.execute("SELECT user_id FROM cookies LIMIT 1")
+                except sqlite3.OperationalError:
+                    # user_id列不存在，需要添加并更新历史数据
+                    cursor.execute("ALTER TABLE cookies ADD COLUMN user_id INTEGER")
+                    cursor.execute("UPDATE cookies SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
+                else:
+                    # user_id列存在，更新NULL值
+                    cursor.execute("UPDATE cookies SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
 
             self.conn.commit()
             logger.info(f"数据库初始化成功: {self.db_path}")

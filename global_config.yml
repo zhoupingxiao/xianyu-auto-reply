@@ -9,7 +9,7 @@ APP_CONFIG:
   platform: web
 AUTO_REPLY:
   api:
-    enabled: true  # 禁用API回复，使用AI回复或关键词回复
+    enabled: false  # 禁用API回复，使用AI回复或关键词回复
     host: 0.0.0.0  # 绑定所有网络接口，支持IP访问
     port: 8080     # Web服务端口
     timeout: 10

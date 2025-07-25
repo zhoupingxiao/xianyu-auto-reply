@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>闲鱼自动回复管理系统</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/static/lib/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/lib/bootstrap-icons/bootstrap-icons.css">
   <style>
     :root {
       --primary-color: #4f46e5;
@@ -1295,7 +1295,7 @@
         <!-- Cookie筛选 -->
         <div class="card mb-4">
           <div class="card-body">
-            <div class="row align-items-center">
+            <div class="row align-items-end">
               <div class="col-md-6">
                 <label for="itemCookieFilter" class="form-label">筛选账号</label>
                 <select class="form-select" id="itemCookieFilter" onchange="loadItemsByCookie()">
@@ -1303,13 +1303,23 @@
                 </select>
               </div>
               <div class="col-md-6">
-                <div class="d-flex justify-content-end align-items-end h-100 gap-2">
-                  <button class="btn btn-success" onclick="getAllItemsFromAccount()">
-                    <i class="bi bi-download me-1"></i>获取所有商品
-                  </button>
-                  <button class="btn btn-primary" onclick="refreshItems()">
-                    <i class="bi bi-arrow-clockwise me-1"></i>刷新
-                  </button>
+                <div class="d-flex justify-content-end align-items-end gap-2">
+                  <!-- 页码输入 -->
+                  <div class="d-flex align-items-center gap-2">
+                    <label for="pageNumber" class="form-label mb-0 text-nowrap">页码:</label>
+                    <input type="number" class="form-control" id="pageNumber" placeholder="页码" min="1" value="1" style="width: 80px;">
+                  </div>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-success" onclick="getAllItemsFromAccount()">
+                      <i class="bi bi-download me-1"></i>获取指定页
+                    </button>
+                    <button class="btn btn-warning" onclick="getAllItemsFromAccountAll()">
+                      <i class="bi bi-collection me-1"></i>获取所有页
+                    </button>
+                    <button class="btn btn-primary" onclick="refreshItems()">
+                      <i class="bi bi-arrow-clockwise me-1"></i>刷新
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1382,8 +1392,9 @@
               </div>
             </div>
             <div class="col-md-4">
-              <button class="btn btn-outline-primary w-100" onclick="refreshAccountList()">
-                <i class="bi bi-arrow-clockwise me-2"></i>刷新列表
+              <button class="btn btn-primary w-100 d-flex align-items-center justify-content-center" onclick="refreshAccountList()" style="padding: 1rem 1.25rem; height: auto;">
+                <i class="bi bi-arrow-clockwise me-2"></i>
+                <span>刷新列表</span>
               </button>
             </div>
           </div>
@@ -1879,6 +1890,19 @@
                   </div>
                 </div>
 
+                <!-- 系统缓存管理 -->
+                <div class="row mt-4">
+                  <div class="col-12">
+                    <h6 class="mb-3">
+                      <i class="bi bi-arrow-clockwise me-2"></i>系统缓存管理
+                    </h6>
+                    <p class="text-muted mb-3">如果导入备份后关键字等数据没有立即更新，可以手动刷新系统缓存</p>
+                    <button type="button" class="btn btn-info" onclick="reloadSystemCache()">
+                      <i class="bi bi-arrow-clockwise me-1"></i>刷新系统缓存
+                    </button>
+                  </div>
+                </div>
+
                 <div class="alert alert-warning mt-4" role="alert">
                   <i class="bi bi-exclamation-triangle me-2"></i>
                   <strong>注意：</strong>导入备份将会覆盖当前系统的所有数据，请谨慎操作！建议在导入前先导出当前数据作为备份。
@@ -2339,7 +2363,7 @@
   <div class="toast-container"></div>
 
   <!-- JS依赖 -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/lib/bootstrap/bootstrap.bundle.min.js"></script>
   <script>
     // 全局变量
     const apiBase = location.origin;
@@ -5787,15 +5811,38 @@
         });
 
         if (response.ok) {
-          showToast('备份导入成功，页面将在3秒后刷新', 'success');
+          showToast('备份导入成功！正在刷新数据...', 'success');
 
           // 清空文件选择
           fileInput.value = '';
 
-          // 3秒后刷新页面
-          setTimeout(() => {
-            window.location.reload();
-          }, 3000);
+          // 清除前端缓存
+          clearKeywordCache();
+
+          // 延迟一下再刷新数据，确保后端缓存已更新
+          setTimeout(async () => {
+            try {
+              // 如果当前在关键字管理页面，重新加载数据
+              if (currentCookieId) {
+                await loadAccountKeywords();
+              }
+
+              // 刷新仪表盘数据
+              if (document.getElementById('dashboard-section').classList.contains('active')) {
+                await loadDashboard();
+              }
+
+              // 刷新账号列表
+              if (document.getElementById('accounts-section').classList.contains('active')) {
+                await loadCookies();
+              }
+
+              showToast('数据刷新完成！', 'success');
+            } catch (error) {
+              console.error('刷新数据失败:', error);
+              showToast('备份导入成功，但数据刷新失败，请手动刷新页面', 'warning');
+            }
+          }, 1000);
         } else {
           const error = await response.text();
           showToast(`导入失败: ${error}`, 'danger');
@@ -5803,6 +5850,41 @@
       } catch (error) {
         console.error('导入备份失败:', error);
         showToast('导入备份失败', 'danger');
+      }
+    }
+
+    // 刷新系统缓存
+    async function reloadSystemCache() {
+      try {
+        showToast('正在刷新系统缓存...', 'info');
+
+        const response = await fetch(`${apiBase}/system/reload-cache`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          showToast('系统缓存刷新成功！关键字等数据已更新', 'success');
+
+          // 清除前端缓存
+          clearKeywordCache();
+
+          // 如果当前在关键字管理页面，重新加载数据
+          if (currentCookieId) {
+            setTimeout(() => {
+              loadAccountKeywords();
+            }, 500);
+          }
+        } else {
+          const error = await response.text();
+          showToast(`刷新缓存失败: ${error}`, 'danger');
+        }
+      } catch (error) {
+        console.error('刷新系统缓存失败:', error);
+        showToast('刷新系统缓存失败', 'danger');
       }
     }
 
@@ -5815,6 +5897,16 @@
         await loadCookieFilter();
 
         // 加载商品列表
+        await refreshItemsData();
+      } catch (error) {
+        console.error('加载商品列表失败:', error);
+        showToast('加载商品列表失败', 'danger');
+      }
+    }
+
+    // 只刷新商品数据，不重新加载筛选器
+    async function refreshItemsData() {
+      try {
         const selectedCookie = document.getElementById('itemCookieFilter').value;
         if (selectedCookie) {
           await loadItemsByCookie();
@@ -5822,8 +5914,8 @@
           await loadAllItems();
         }
       } catch (error) {
-        console.error('加载商品列表失败:', error);
-        showToast('加载商品列表失败', 'danger');
+        console.error('刷新商品数据失败:', error);
+        showToast('刷新商品数据失败', 'danger');
       }
     }
 
@@ -5839,6 +5931,9 @@
         if (response.ok) {
           const accounts = await response.json();
           const select = document.getElementById('itemCookieFilter');
+
+          // 保存当前选择的值
+          const currentValue = select.value;
 
           // 清空现有选项（保留"所有账号"）
           select.innerHTML = '<option value="">所有账号</option>';
@@ -5887,6 +5982,11 @@
               option.textContent = `🔴 ${account.id} (已禁用)`;
               select.appendChild(option);
             });
+          }
+
+          // 恢复之前选择的值
+          if (currentValue) {
+            select.value = currentValue;
           }
         }
       } catch (error) {
@@ -6026,12 +6126,70 @@
 
     // 刷新商品列表
     async function refreshItems() {
-      await loadItems();
+      await refreshItemsData();
       showToast('商品列表已刷新', 'success');
     }
 
-    // 获取所有商品信息
+    // 获取商品信息
     async function getAllItemsFromAccount() {
+      const cookieSelect = document.getElementById('itemCookieFilter');
+      const selectedCookieId = cookieSelect.value;
+      const pageNumber = parseInt(document.getElementById('pageNumber').value) || 1;
+
+      if (!selectedCookieId) {
+        showToast('请先选择一个账号', 'warning');
+        return;
+      }
+
+      if (pageNumber < 1) {
+        showToast('页码必须大于0', 'warning');
+        return;
+      }
+
+      // 显示加载状态
+      const button = event.target;
+      const originalText = button.innerHTML;
+      button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>获取中...';
+      button.disabled = true;
+
+      try {
+        const response = await fetch(`${apiBase}/items/get-by-page`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            cookie_id: selectedCookieId,
+            page_number: pageNumber,
+            page_size: 20
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            showToast(`成功获取第${pageNumber}页 ${data.current_count} 个商品，请查看控制台日志`, 'success');
+            // 刷新商品列表（保持筛选器选择）
+            await refreshItemsData();
+          } else {
+            showToast(data.message || '获取商品信息失败', 'danger');
+          }
+        } else {
+          throw new Error(`HTTP ${response.status}`);
+        }
+      } catch (error) {
+        console.error('获取商品信息失败:', error);
+        showToast('获取商品信息失败', 'danger');
+      } finally {
+        // 恢复按钮状态
+        button.innerHTML = originalText;
+        button.disabled = false;
+      }
+    }
+
+    // 获取所有页商品信息
+    async function getAllItemsFromAccountAll() {
       const cookieSelect = document.getElementById('itemCookieFilter');
       const selectedCookieId = cookieSelect.value;
 
@@ -6061,9 +6219,12 @@
         if (response.ok) {
           const data = await response.json();
           if (data.success) {
-            showToast(`成功获取商品信息，请查看控制台日志`, 'success');
-            // 刷新商品列表
-            await loadItems();
+            const message = data.total_pages ?
+              `成功获取 ${data.total_count} 个商品（共${data.total_pages}页），请查看控制台日志` :
+              `成功获取商品信息，请查看控制台日志`;
+            showToast(message, 'success');
+            // 刷新商品列表（保持筛选器选择）
+            await refreshItemsData();
           } else {
             showToast(data.message || '获取商品信息失败', 'danger');
           }
@@ -6079,6 +6240,8 @@
         button.disabled = false;
       }
     }
+
+
 
     // 编辑商品详情
     async function editItem(cookieId, itemId) {
@@ -6142,8 +6305,8 @@
           const modal = bootstrap.Modal.getInstance(document.getElementById('editItemModal'));
           modal.hide();
 
-          // 刷新列表
-          await loadItems();
+          // 刷新列表（保持筛选器选择）
+          await refreshItemsData();
         } else {
           const error = await response.text();
           showToast(`更新失败: ${error}`, 'danger');
@@ -6172,8 +6335,8 @@
 
         if (response.ok) {
           showToast('商品信息删除成功', 'success');
-          // 刷新列表
-          await loadItems();
+          // 刷新列表（保持筛选器选择）
+          await refreshItemsData();
         } else {
           const error = await response.text();
           showToast(`删除失败: ${error}`, 'danger');
@@ -6221,8 +6384,8 @@
         if (response.ok) {
           const result = await response.json();
           showToast(`批量删除完成: 成功 ${result.success_count} 个，失败 ${result.failed_count} 个`, 'success');
-          // 刷新列表
-          await loadItems();
+          // 刷新列表（保持筛选器选择）
+          await refreshItemsData();
         } else {
           const error = await response.text();
           showToast(`批量删除失败: ${error}`, 'danger');

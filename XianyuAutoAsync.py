@@ -20,34 +20,26 @@ from utils.ws_utils import WebSocketClient
 import sys
 import aiohttp
 
-# 日志配置 - 统一日志文件
+# 日志配置
 log_dir = 'logs'
 os.makedirs(log_dir, exist_ok=True)
 log_path = os.path.join(log_dir, f"xianyu_{time.strftime('%Y-%m-%d')}.log")
-
-# 移除所有现有的日志处理器
 logger.remove()
-
-# 导入日志过滤器
-try:
-    from log_filter import filter_log_record
-except ImportError:
-    # 如果过滤器不可用，使用默认过滤器
-    def filter_log_record(record):
-        return True
-
-# 只添加文件日志处理器，使用统一格式便于解析，并应用过滤器
 logger.add(
     log_path,
     rotation=LOG_CONFIG.get('rotation', '1 day'),
     retention=LOG_CONFIG.get('retention', '7 days'),
     compression=LOG_CONFIG.get('compression', 'zip'),
     level=LOG_CONFIG.get('level', 'INFO'),
-    format='{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} - {message}',
+    format=LOG_CONFIG.get('format', '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'),
     encoding='utf-8',
-    enqueue=False,  # 改为False，确保立即写入
-    buffering=1,    # 行缓冲，立即刷新到文件
-    filter=filter_log_record  # 应用日志过滤器
+    enqueue=True
+)
+logger.add(
+    sys.stdout,
+    level=LOG_CONFIG.get('level', 'INFO'),
+    format=LOG_CONFIG.get('format', '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'),
+    enqueue=True
 )
 
 class XianyuLive:
@@ -205,10 +197,14 @@ class XianyuLive:
                                 return new_token
                             
                     logger.error(f"Token刷新失败: {res_json}")
+                    # 发送Token刷新失败通知
+                    await self.send_token_refresh_notification(f"Token刷新失败: {res_json}")
                     return None
-                    
+
         except Exception as e:
             logger.error(f"Token刷新异常: {self._safe_str(e)}")
+            # 发送Token刷新异常通知
+            await self.send_token_refresh_notification(f"Token刷新异常: {str(e)}")
             return None
 
     async def update_config_cookies(self):
@@ -223,11 +219,17 @@ class XianyuLive:
                     logger.debug(f"已更新Cookie到数据库: {self.cookie_id}")
                 except Exception as e:
                     logger.error(f"更新数据库Cookie失败: {self._safe_str(e)}")
+                    # 发送数据库更新失败通知
+                    await self.send_token_refresh_notification(f"数据库Cookie更新失败: {str(e)}")
             else:
                 logger.warning("Cookie ID不存在，无法更新数据库")
+                # 发送Cookie ID缺失通知
+                await self.send_token_refresh_notification("Cookie ID不存在，无法更新数据库")
 
         except Exception as e:
             logger.error(f"更新Cookie失败: {self._safe_str(e)}")
+            # 发送Cookie更新失败通知
+            await self.send_token_refresh_notification(f"Cookie更新失败: {str(e)}")
 
     async def save_item_info_to_db(self, item_id: str, item_detail: str = None):
         """保存商品信息到数据库
@@ -711,11 +713,11 @@ class XianyuLive:
                     send_message=send_message
                 )
                 logger.info(f"使用默认回复: {formatted_reply}")
-                return f"[默认回复] {formatted_reply}"
+                return formatted_reply
             except Exception as format_error:
                 logger.error(f"默认回复变量替换失败: {self._safe_str(format_error)}")
                 # 如果变量替换失败，返回原始内容
-                return f"[默认回复] {reply_content}"
+                return reply_content
 
         except Exception as e:
             logger.error(f"获取默认回复失败: {self._safe_str(e)}")
@@ -744,11 +746,11 @@ class XianyuLive:
                             send_message=send_message
                         )
                         logger.info(f"关键词匹配成功: '{keyword}' -> {formatted_reply}")
-                        return f"[关键词回复] {formatted_reply}"
+                        return formatted_reply
                     except Exception as format_error:
                         logger.error(f"关键词回复变量替换失败: {self._safe_str(format_error)}")
                         # 如果变量替换失败，返回原始内容
-                        return f"[关键词回复] {reply}"
+                        return reply
 
             logger.debug(f"未找到匹配的关键词: {send_message}")
             return None
@@ -799,7 +801,7 @@ class XianyuLive:
 
             if reply:
                 logger.info(f"AI回复生成成功: {reply}")
-                return f"[AI回复] {reply}"
+                return reply
             else:
                 logger.debug(f"AI回复生成失败")
                 return None
@@ -892,6 +894,49 @@ class XianyuLive:
 
         except Exception as e:
             logger.error(f"发送QQ通知异常: {self._safe_str(e)}")
+
+    async def send_token_refresh_notification(self, error_message: str):
+        """发送Token刷新异常通知"""
+        try:
+            from db_manager import db_manager
+
+            # 获取当前账号的通知配置
+            notifications = db_manager.get_account_notifications(self.cookie_id)
+
+            if not notifications:
+                logger.debug("未配置消息通知，跳过Token刷新通知")
+                return
+
+            # 构造通知消息
+            notification_msg = f"""🔴 闲鱼账号Token刷新异常
+
+账号ID: {self.cookie_id}
+异常时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
+异常信息: {error_message}
+
+请检查账号Cookie是否过期，如有需要请及时更新Cookie配置。"""
+
+            logger.info(f"准备发送Token刷新异常通知: {self.cookie_id}")
+
+            # 发送通知到各个渠道
+            for notification in notifications:
+                if not notification.get('enabled', True):
+                    continue
+
+                channel_type = notification.get('channel_type')
+                channel_config = notification.get('channel_config')
+
+                try:
+                    if channel_type == 'qq':
+                        await self._send_qq_notification(channel_config, notification_msg)
+                    else:
+                        logger.warning(f"不支持的通知渠道类型: {channel_type}")
+
+                except Exception as notify_error:
+                    logger.error(f"发送Token刷新通知失败 ({notification.get('channel_name', 'Unknown')}): {self._safe_str(notify_error)}")
+
+        except Exception as e:
+            logger.error(f"处理Token刷新通知失败: {self._safe_str(e)}")
 
     async def send_delivery_failure_notification(self, send_user_name: str, send_user_id: str, item_id: str, error_message: str):
         """发送自动发货失败通知"""
@@ -1188,6 +1233,8 @@ class XianyuLive:
                         break
                     else:
                         logger.error("Token刷新失败，将在{}分钟后重试".format(self.token_retry_interval // 60))
+                        # 发送Token刷新失败通知
+                        await self.send_token_refresh_notification("Token定时刷新失败，将自动重试")
                         await asyncio.sleep(self.token_retry_interval)
                         continue
                 await asyncio.sleep(60)
@@ -1272,6 +1319,8 @@ class XianyuLive:
         
         if not self.current_token:
             logger.error("无法获取有效token，初始化失败")
+            # 发送Token获取失败通知
+            await self.send_token_refresh_notification("初始化时无法获取有效Token")
             raise Exception("Token获取失败")
             
         msg = {
@@ -1826,19 +1875,19 @@ class XianyuLive:
             # 记录回复来源
             reply_source = 'API'  # 默认假设是API回复
 
-            # 如果API回复失败或未启用API，按优先级尝试其他回复方式
+            # 如果API回复失败或未启用API，按新的优先级顺序处理
             if not reply:
-                # 优先尝试关键词匹配回复
+                # 1. 首先尝试关键词匹配
                 reply = await self.get_keyword_reply(send_user_name, send_user_id, send_message)
                 if reply:
                     reply_source = '关键词'  # 标记为关键词回复
                 else:
-                    # 如果关键词匹配失败，尝试AI回复
+                    # 2. 关键词匹配失败，如果AI开关打开，尝试AI回复
                     reply = await self.get_ai_reply(send_user_name, send_user_id, send_message, item_id, chat_id)
                     if reply:
                         reply_source = 'AI'  # 标记为AI回复
                     else:
-                        # 最后尝试使用默认回复
+                        # 3. 最后使用默认回复
                         reply = await self.get_default_reply(send_user_name, send_user_id, send_message)
                         reply_source = '默认'  # 标记为默认回复
 
@@ -1908,8 +1957,14 @@ class XianyuLive:
         finally:
             await self.close_session()  # 确保关闭session
 
-    async def get_item_list_info(self, retry_count=0):
-        """获取商品信息，自动处理token失效的情况"""
+    async def get_item_list_info(self, page_number=1, page_size=20, retry_count=0):
+        """获取商品信息，自动处理token失效的情况
+
+        Args:
+            page_number (int): 页码，从1开始
+            page_size (int): 每页数量，默认20
+            retry_count (int): 重试次数，内部使用
+        """
         if retry_count >= 3:  # 最多重试3次
             logger.error("获取商品信息失败，重试次数过多")
             return {"error": "获取商品信息失败，重试次数过多"}
@@ -1952,8 +2007,8 @@ class XianyuLive:
 
         data = {
             'needGroupInfo': False,
-            'pageNumber': 1,
-            'pageSize': 20,
+            'pageNumber': page_number,
+            'pageSize': page_size,
             'groupName': '在售',
             'groupId': '58877261',
             'defaultGroup': True,
@@ -2017,7 +2072,7 @@ class XianyuLive:
 
                     # 打印商品详细信息到控制台
                     print("\n" + "="*80)
-                    print(f"📦 账号 {self.myid} 的商品列表 ({len(items_list)} 个商品)")
+                    print(f"📦 账号 {self.myid} 的商品列表 (第{page_number}页，{len(items_list)} 个商品)")
                     print("="*80)
 
                     for i, item in enumerate(items_list, 1):
@@ -2046,7 +2101,9 @@ class XianyuLive:
 
                     return {
                         "success": True,
-                        "total_count": len(items_list),
+                        "page_number": page_number,
+                        "page_size": page_size,
+                        "current_count": len(items_list),
                         "items": items_list,
                         "saved_count": saved_count if items_list else 0,
                         "raw_data": items_data  # 保留原始数据以备调试
@@ -2057,7 +2114,7 @@ class XianyuLive:
                     if 'FAIL_SYS_TOKEN_EXOIRED' in error_msg or 'token' in error_msg.lower():
                         logger.warning(f"Token失效，准备重试: {error_msg}")
                         await asyncio.sleep(0.5)
-                        return await self.get_item_list_info(retry_count + 1)
+                        return await self.get_item_list_info(page_number, page_size, retry_count + 1)
                     else:
                         logger.error(f"获取商品信息失败: {res_json}")
                         return {"error": f"获取商品信息失败: {error_msg}"}
@@ -2065,7 +2122,65 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"商品信息API请求异常: {self._safe_str(e)}")
             await asyncio.sleep(0.5)
-            return await self.get_item_list_info(retry_count + 1)
+            return await self.get_item_list_info(page_number, page_size, retry_count + 1)
+
+    async def get_all_items(self, page_size=20, max_pages=None):
+        """获取所有商品信息（自动分页）
+
+        Args:
+            page_size (int): 每页数量，默认20
+            max_pages (int): 最大页数限制，None表示无限制
+
+        Returns:
+            dict: 包含所有商品信息的字典
+        """
+        all_items = []
+        page_number = 1
+        total_saved = 0
+
+        logger.info(f"开始获取所有商品信息，每页{page_size}条")
+
+        while True:
+            if max_pages and page_number > max_pages:
+                logger.info(f"达到最大页数限制 {max_pages}，停止获取")
+                break
+
+            logger.info(f"正在获取第 {page_number} 页...")
+            result = await self.get_item_list_info(page_number, page_size)
+
+            if not result.get("success"):
+                logger.error(f"获取第 {page_number} 页失败: {result}")
+                break
+
+            current_items = result.get("items", [])
+            if not current_items:
+                logger.info(f"第 {page_number} 页没有数据，获取完成")
+                break
+
+            all_items.extend(current_items)
+            total_saved += result.get("saved_count", 0)
+
+            logger.info(f"第 {page_number} 页获取到 {len(current_items)} 个商品")
+
+            # 如果当前页商品数量少于页面大小，说明已经是最后一页
+            if len(current_items) < page_size:
+                logger.info(f"第 {page_number} 页商品数量({len(current_items)})少于页面大小({page_size})，获取完成")
+                break
+
+            page_number += 1
+
+            # 添加延迟避免请求过快
+            await asyncio.sleep(1)
+
+        logger.info(f"所有商品获取完成，共 {len(all_items)} 个商品，保存了 {total_saved} 个")
+
+        return {
+            "success": True,
+            "total_pages": page_number,
+            "total_count": len(all_items),
+            "total_saved": total_saved,
+            "items": all_items
+        }
 
 if __name__ == '__main__':
     cookies_str = os.getenv('COOKIES_STR')

@@ -35,6 +35,21 @@ class CookieManager:
         except Exception as e:
             logger.error(f"从数据库加载数据失败: {e}")
 
+    def reload_from_db(self):
+        """重新从数据库加载所有数据（用于备份导入后刷新）"""
+        logger.info("重新从数据库加载数据...")
+        old_cookies_count = len(self.cookies)
+        old_keywords_count = len(self.keywords)
+
+        # 重新加载数据
+        self._load_from_db()
+
+        new_cookies_count = len(self.cookies)
+        new_keywords_count = len(self.keywords)
+
+        logger.info(f"数据重新加载完成: Cookie {old_cookies_count} -> {new_cookies_count}, 关键字组 {old_keywords_count} -> {new_keywords_count}")
+        return True
+
     # ------------------------ 内部协程 ------------------------
     async def _run_xianyu(self, cookie_id: str, cookie_value: str):
         """在事件循环中启动 XianyuLive.main"""

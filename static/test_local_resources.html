@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地资源测试</title>
+    <link rel="stylesheet" href="/static/lib/bootstrap/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/lib/bootstrap-icons/bootstrap-icons.css">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h3 class="mb-0">
+                            <i class="bi bi-check-circle-fill me-2"></i>
+                            本地资源测试
+                        </h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-success" role="alert">
+                            <i class="bi bi-info-circle-fill me-2"></i>
+                            如果您能看到这个页面的样式和图标正常显示，说明本地资源加载成功！
+                        </div>
+                        
+                        <h5>测试项目：</h5>
+                        <ul class="list-group">
+                            <li class="list-group-item">
+                                <i class="bi bi-check-lg text-success me-2"></i>
+                                Bootstrap CSS 样式
+                            </li>
+                            <li class="list-group-item">
+                                <i class="bi bi-check-lg text-success me-2"></i>
+                                Bootstrap Icons 图标字体
+                            </li>
+                            <li class="list-group-item">
+                                <i class="bi bi-check-lg text-success me-2"></i>
+                                Bootstrap JavaScript 功能
+                            </li>
+                        </ul>
+                        
+                        <div class="mt-4">
+                            <button class="btn btn-primary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseExample">
+                                <i class="bi bi-arrow-down-circle me-2"></i>
+                                测试 JavaScript 功能
+                            </button>
+                        </div>
+                        
+                        <div class="collapse mt-3" id="collapseExample">
+                            <div class="card card-body">
+                                <i class="bi bi-emoji-smile me-2"></i>
+                                恭喜！Bootstrap JavaScript 功能正常工作！
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <h6>图标测试：</h6>
+                            <div class="d-flex gap-3 fs-4">
+                                <i class="bi bi-heart-fill text-danger"></i>
+                                <i class="bi bi-star-fill text-warning"></i>
+                                <i class="bi bi-shield-check text-success"></i>
+                                <i class="bi bi-gear-fill text-secondary"></i>
+                                <i class="bi bi-chat-dots-fill text-primary"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/lib/bootstrap/bootstrap.bundle.min.js"></script>
+</body>
+</html>
