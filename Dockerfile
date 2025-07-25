@@ -21,6 +21,10 @@ RUN apt-get update && \
         npm \
         tzdata \
         curl \
+        libjpeg-dev \
+        libpng-dev \
+        libfreetype6-dev \
+        fonts-dejavu-core \
         && apt-get clean \
         && rm -rf /var/lib/apt/lists/*
 

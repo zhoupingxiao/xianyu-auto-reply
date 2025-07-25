@@ -4,6 +4,19 @@
 
 本项目支持完整的Docker容器化部署，包含所有必要的依赖和配置。支持单容器部署和多容器编排部署。
 
+## 🆕 多用户系统支持
+
+系统现已支持多用户功能：
+- **用户注册**: 支持邮箱验证码注册
+- **图形验证码**: 防止自动化注册
+- **数据隔离**: 每个用户的数据完全独立
+- **权限管理**: 严格的用户权限控制
+- **安全认证**: JWT Token + 图形验证码双重保护
+
+### 新增依赖
+- **Pillow**: 用于生成图形验证码
+- **系统字体**: 支持验证码文字渲染
+
 ## 🚀 快速开始
 
 ### 方式一：使用 Docker Compose（推荐）
@@ -110,6 +123,24 @@ ADMIN_PASSWORD=admin123
 
 # JWT密钥（建议修改）
 JWT_SECRET_KEY=your-secret-key-here
+```
+
+#### 多用户系统配置
+```bash
+# 多用户功能开关
+MULTIUSER_ENABLED=true
+
+# 用户注册开关
+USER_REGISTRATION_ENABLED=true
+
+# 邮箱验证开关
+EMAIL_VERIFICATION_ENABLED=true
+
+# 图形验证码开关
+CAPTCHA_ENABLED=true
+
+# Token过期时间（秒，默认24小时）
+TOKEN_EXPIRE_TIME=86400
 ```
 
 #### 功能配置

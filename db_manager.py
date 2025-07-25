@@ -4,7 +4,13 @@ import threading
 import hashlib
 import time
 import json
-from typing import List, Tuple, Dict, Optional
+import random
+import string
+import aiohttp
+import io
+import base64
+from PIL import Image, ImageDraw, ImageFont
+from typing import List, Tuple, Dict, Optional, Any
 from loguru import logger
 
 class DBManager:
@@ -72,6 +78,17 @@ class DBManager:
                 code TEXT NOT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 used BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            # 创建图形验证码表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS captcha_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                code TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             ''')
@@ -305,17 +322,30 @@ class DBManager:
         return self.conn
     
     # -------------------- Cookie操作 --------------------
-    def save_cookie(self, cookie_id: str, cookie_value: str) -> bool:
+    def save_cookie(self, cookie_id: str, cookie_value: str, user_id: int = None) -> bool:
         """保存Cookie到数据库，如存在则更新"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
+
+                # 如果没有提供user_id，尝试从现有记录获取，否则使用admin用户ID
+                if user_id is None:
+                    cursor.execute("SELECT user_id FROM cookies WHERE id = ?", (cookie_id,))
+                    existing = cursor.fetchone()
+                    if existing:
+                        user_id = existing[0]
+                    else:
+                        # 获取admin用户ID作为默认值
+                        cursor.execute("SELECT id FROM users WHERE username = 'admin'")
+                        admin_user = cursor.fetchone()
+                        user_id = admin_user[0] if admin_user else 1
+
                 cursor.execute(
-                    "INSERT OR REPLACE INTO cookies (id, value) VALUES (?, ?)",
-                    (cookie_id, cookie_value)
+                    "INSERT OR REPLACE INTO cookies (id, value, user_id) VALUES (?, ?, ?)",
+                    (cookie_id, cookie_value, user_id)
                 )
                 self.conn.commit()
-                logger.debug(f"Cookie保存成功: {cookie_id}")
+                logger.debug(f"Cookie保存成功: {cookie_id} (用户ID: {user_id})")
                 return True
             except Exception as e:
                 logger.error(f"Cookie保存失败: {e}")
@@ -351,12 +381,15 @@ class DBManager:
                 logger.error(f"获取Cookie失败: {e}")
                 return None
     
-    def get_all_cookies(self) -> Dict[str, str]:
-        """获取所有Cookie"""
+    def get_all_cookies(self, user_id: int = None) -> Dict[str, str]:
+        """获取所有Cookie（支持用户隔离）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cursor.execute("SELECT id, value FROM cookies")
+                if user_id is not None:
+                    cursor.execute("SELECT id, value FROM cookies WHERE user_id = ?", (user_id,))
+                else:
+                    cursor.execute("SELECT id, value FROM cookies")
                 return {row[0]: row[1] for row in cursor.fetchall()}
             except Exception as e:
                 logger.error(f"获取所有Cookie失败: {e}")
@@ -427,12 +460,20 @@ class DBManager:
                 logger.error(f"获取关键字失败: {e}")
                 return []
     
-    def get_all_keywords(self) -> Dict[str, List[Tuple[str, str]]]:
-        """获取所有Cookie的关键字"""
+    def get_all_keywords(self, user_id: int = None) -> Dict[str, List[Tuple[str, str]]]:
+        """获取所有Cookie的关键字（支持用户隔离）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cursor.execute("SELECT cookie_id, keyword, reply FROM keywords")
+                if user_id is not None:
+                    cursor.execute("""
+                    SELECT k.cookie_id, k.keyword, k.reply
+                    FROM keywords k
+                    JOIN cookies c ON k.cookie_id = c.id
+                    WHERE c.user_id = ?
+                    """, (user_id,))
+                else:
+                    cursor.execute("SELECT cookie_id, keyword, reply FROM keywords")
 
                 result = {}
                 for row in cursor.fetchall():
@@ -885,44 +926,84 @@ class DBManager:
                 return False
 
     # -------------------- 备份和恢复操作 --------------------
-    def export_backup(self) -> Dict[str, any]:
-        """导出系统备份数据"""
+    def export_backup(self, user_id: int = None) -> Dict[str, any]:
+        """导出系统备份数据（支持用户隔离）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
                 backup_data = {
                     'version': '1.0',
                     'timestamp': time.time(),
+                    'user_id': user_id,
                     'data': {}
                 }
 
-                # 备份所有表的数据
-                tables = [
-                    'cookies', 'keywords', 'cookie_status', 'cards',
-                    'delivery_rules', 'default_replies', 'notification_channels',
-                    'message_notifications', 'system_settings', 'item_info',
-                    'ai_reply_settings', 'ai_conversations', 'ai_item_cache'
-                ]
-
-                for table in tables:
-                    cursor.execute(f"SELECT * FROM {table}")
+                if user_id is not None:
+                    # 用户级备份：只备份该用户的数据
+                    # 备份用户的cookies
+                    cursor.execute("SELECT * FROM cookies WHERE user_id = ?", (user_id,))
                     columns = [description[0] for description in cursor.description]
                     rows = cursor.fetchall()
-
-                    backup_data['data'][table] = {
+                    backup_data['data']['cookies'] = {
                         'columns': columns,
                         'rows': [list(row) for row in rows]
                     }
 
-                logger.info(f"导出备份成功，包含 {len(tables)} 个表")
+                    # 备份用户cookies相关的其他数据
+                    user_cookie_ids = [row[0] for row in rows]  # 获取用户的cookie_id列表
+
+                    if user_cookie_ids:
+                        placeholders = ','.join(['?' for _ in user_cookie_ids])
+
+                        # 备份关键字
+                        cursor.execute(f"SELECT * FROM keywords WHERE cookie_id IN ({placeholders})", user_cookie_ids)
+                        columns = [description[0] for description in cursor.description]
+                        rows = cursor.fetchall()
+                        backup_data['data']['keywords'] = {
+                            'columns': columns,
+                            'rows': [list(row) for row in rows]
+                        }
+
+                        # 备份其他相关表
+                        related_tables = ['cookie_status', 'default_replies', 'message_notifications',
+                                        'item_info', 'ai_reply_settings', 'ai_conversations']
+
+                        for table in related_tables:
+                            cursor.execute(f"SELECT * FROM {table} WHERE cookie_id IN ({placeholders})", user_cookie_ids)
+                            columns = [description[0] for description in cursor.description]
+                            rows = cursor.fetchall()
+                            backup_data['data'][table] = {
+                                'columns': columns,
+                                'rows': [list(row) for row in rows]
+                            }
+                else:
+                    # 系统级备份：备份所有数据
+                    tables = [
+                        'cookies', 'keywords', 'cookie_status', 'cards',
+                        'delivery_rules', 'default_replies', 'notification_channels',
+                        'message_notifications', 'system_settings', 'item_info',
+                        'ai_reply_settings', 'ai_conversations', 'ai_item_cache'
+                    ]
+
+                    for table in tables:
+                        cursor.execute(f"SELECT * FROM {table}")
+                        columns = [description[0] for description in cursor.description]
+                        rows = cursor.fetchall()
+
+                        backup_data['data'][table] = {
+                            'columns': columns,
+                            'rows': [list(row) for row in rows]
+                        }
+
+                logger.info(f"导出备份成功，用户ID: {user_id}")
                 return backup_data
 
             except Exception as e:
                 logger.error(f"导出备份失败: {e}")
                 raise
 
-    def import_backup(self, backup_data: Dict[str, any]) -> bool:
-        """导入系统备份数据"""
+    def import_backup(self, backup_data: Dict[str, any], user_id: int = None) -> bool:
+        """导入系统备份数据（支持用户隔离）"""
         with self.lock:
             try:
                 # 验证备份数据格式
@@ -933,19 +1014,37 @@ class DBManager:
                 cursor = self.conn.cursor()
                 cursor.execute("BEGIN TRANSACTION")
 
-                # 清空现有数据（除了管理员密码）
-                # 注意：按照外键依赖关系的逆序删除
-                tables = [
-                    'message_notifications', 'notification_channels', 'default_replies',
-                    'delivery_rules', 'cards', 'item_info', 'cookie_status', 'keywords',
-                    'ai_conversations', 'ai_reply_settings', 'ai_item_cache', 'cookies'
-                ]
+                if user_id is not None:
+                    # 用户级导入：只清空该用户的数据
+                    # 获取用户的cookie_id列表
+                    cursor.execute("SELECT id FROM cookies WHERE user_id = ?", (user_id,))
+                    user_cookie_ids = [row[0] for row in cursor.fetchall()]
 
-                for table in tables:
-                    cursor.execute(f"DELETE FROM {table}")
+                    if user_cookie_ids:
+                        placeholders = ','.join(['?' for _ in user_cookie_ids])
 
-                # 清空系统设置（保留管理员密码）
-                cursor.execute("DELETE FROM system_settings WHERE key != 'admin_password_hash'")
+                        # 删除用户相关数据
+                        related_tables = ['message_notifications', 'default_replies', 'item_info',
+                                        'cookie_status', 'keywords', 'ai_conversations', 'ai_reply_settings']
+
+                        for table in related_tables:
+                            cursor.execute(f"DELETE FROM {table} WHERE cookie_id IN ({placeholders})", user_cookie_ids)
+
+                        # 删除用户的cookies
+                        cursor.execute("DELETE FROM cookies WHERE user_id = ?", (user_id,))
+                else:
+                    # 系统级导入：清空所有数据（除了用户和管理员密码）
+                    tables = [
+                        'message_notifications', 'notification_channels', 'default_replies',
+                        'delivery_rules', 'cards', 'item_info', 'cookie_status', 'keywords',
+                        'ai_conversations', 'ai_reply_settings', 'ai_item_cache', 'cookies'
+                    ]
+
+                    for table in tables:
+                        cursor.execute(f"DELETE FROM {table}")
+
+                    # 清空系统设置（保留管理员密码）
+                    cursor.execute("DELETE FROM system_settings WHERE key != 'admin_password_hash'")
 
                 # 导入数据
                 data = backup_data['data']
@@ -961,6 +1060,16 @@ class DBManager:
 
                     if not rows:
                         continue
+
+                    # 如果是用户级导入，需要确保cookies表的user_id正确
+                    if user_id is not None and table_name == 'cookies':
+                        # 更新所有导入的cookies的user_id
+                        updated_rows = []
+                        for row in rows:
+                            row_dict = dict(zip(columns, row))
+                            row_dict['user_id'] = user_id
+                            updated_rows.append([row_dict[col] for col in columns])
+                        rows = updated_rows
 
                     # 构建插入语句
                     placeholders = ','.join(['?' for _ in columns])
@@ -1043,11 +1152,350 @@ class DBManager:
         password_hash = hashlib.sha256(new_password.encode()).hexdigest()
         return self.set_system_setting('admin_password_hash', password_hash, '管理员密码哈希')
 
+    # ==================== 用户管理方法 ====================
+
+    def create_user(self, username: str, email: str, password: str) -> bool:
+        """创建新用户"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                password_hash = hashlib.sha256(password.encode()).hexdigest()
+
+                cursor.execute('''
+                INSERT INTO users (username, email, password_hash)
+                VALUES (?, ?, ?)
+                ''', (username, email, password_hash))
+
+                self.conn.commit()
+                logger.info(f"创建用户成功: {username} ({email})")
+                return True
+            except sqlite3.IntegrityError as e:
+                logger.error(f"创建用户失败，用户名或邮箱已存在: {e}")
+                self.conn.rollback()
+                return False
+            except Exception as e:
+                logger.error(f"创建用户失败: {e}")
+                self.conn.rollback()
+                return False
+
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """根据用户名获取用户信息"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT id, username, email, password_hash, is_active, created_at, updated_at
+                FROM users WHERE username = ?
+                ''', (username,))
+
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'username': row[1],
+                        'email': row[2],
+                        'password_hash': row[3],
+                        'is_active': row[4],
+                        'created_at': row[5],
+                        'updated_at': row[6]
+                    }
+                return None
+            except Exception as e:
+                logger.error(f"获取用户信息失败: {e}")
+                return None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """根据邮箱获取用户信息"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT id, username, email, password_hash, is_active, created_at, updated_at
+                FROM users WHERE email = ?
+                ''', (email,))
+
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'username': row[1],
+                        'email': row[2],
+                        'password_hash': row[3],
+                        'is_active': row[4],
+                        'created_at': row[5],
+                        'updated_at': row[6]
+                    }
+                return None
+            except Exception as e:
+                logger.error(f"获取用户信息失败: {e}")
+                return None
+
+    def verify_user_password(self, username: str, password: str) -> bool:
+        """验证用户密码"""
+        user = self.get_user_by_username(username)
+        if not user:
+            return False
+
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        return user['password_hash'] == password_hash and user['is_active']
+
+    def generate_verification_code(self) -> str:
+        """生成6位数字验证码"""
+        return ''.join(random.choices(string.digits, k=6))
+
+    def generate_captcha(self) -> Tuple[str, str]:
+        """生成图形验证码
+        返回: (验证码文本, base64编码的图片)
+        """
+        try:
+            # 生成4位随机验证码（数字+字母）
+            chars = string.ascii_uppercase + string.digits
+            captcha_text = ''.join(random.choices(chars, k=4))
+
+            # 创建图片
+            width, height = 120, 40
+            image = Image.new('RGB', (width, height), color='white')
+            draw = ImageDraw.Draw(image)
+
+            # 尝试使用系统字体，如果失败则使用默认字体
+            try:
+                # Windows系统字体
+                font = ImageFont.truetype("arial.ttf", 20)
+            except:
+                try:
+                    # 备用字体
+                    font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 20)
+                except:
+                    # 使用默认字体
+                    font = ImageFont.load_default()
+
+            # 绘制验证码文本
+            for i, char in enumerate(captcha_text):
+                # 随机颜色
+                color = (
+                    random.randint(0, 100),
+                    random.randint(0, 100),
+                    random.randint(0, 100)
+                )
+
+                # 随机位置（稍微偏移）
+                x = 20 + i * 20 + random.randint(-3, 3)
+                y = 8 + random.randint(-3, 3)
+
+                draw.text((x, y), char, font=font, fill=color)
+
+            # 添加干扰线
+            for _ in range(3):
+                start = (random.randint(0, width), random.randint(0, height))
+                end = (random.randint(0, width), random.randint(0, height))
+                draw.line([start, end], fill=(random.randint(100, 200), random.randint(100, 200), random.randint(100, 200)), width=1)
+
+            # 添加干扰点
+            for _ in range(20):
+                x = random.randint(0, width)
+                y = random.randint(0, height)
+                draw.point((x, y), fill=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
+
+            # 转换为base64
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            img_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+            return captcha_text, f"data:image/png;base64,{img_base64}"
+
+        except Exception as e:
+            logger.error(f"生成图形验证码失败: {e}")
+            # 返回简单的文本验证码作为备用
+            simple_code = ''.join(random.choices(string.digits, k=4))
+            return simple_code, ""
+
+    def save_captcha(self, session_id: str, captcha_text: str, expires_minutes: int = 5) -> bool:
+        """保存图形验证码"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                expires_at = time.time() + (expires_minutes * 60)
+
+                # 删除该session的旧验证码
+                cursor.execute('DELETE FROM captcha_codes WHERE session_id = ?', (session_id,))
+
+                cursor.execute('''
+                INSERT INTO captcha_codes (session_id, code, expires_at)
+                VALUES (?, ?, ?)
+                ''', (session_id, captcha_text.upper(), expires_at))
+
+                self.conn.commit()
+                logger.debug(f"保存图形验证码成功: {session_id}")
+                return True
+            except Exception as e:
+                logger.error(f"保存图形验证码失败: {e}")
+                self.conn.rollback()
+                return False
+
+    def verify_captcha(self, session_id: str, user_input: str) -> bool:
+        """验证图形验证码"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                current_time = time.time()
+
+                # 查找有效的验证码
+                cursor.execute('''
+                SELECT id FROM captcha_codes
+                WHERE session_id = ? AND code = ? AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 1
+                ''', (session_id, user_input.upper(), current_time))
+
+                row = cursor.fetchone()
+                if row:
+                    # 删除已使用的验证码
+                    cursor.execute('DELETE FROM captcha_codes WHERE id = ?', (row[0],))
+                    self.conn.commit()
+                    logger.debug(f"图形验证码验证成功: {session_id}")
+                    return True
+                else:
+                    logger.warning(f"图形验证码验证失败: {session_id} - {user_input}")
+                    return False
+            except Exception as e:
+                logger.error(f"验证图形验证码失败: {e}")
+                return False
+
+    def save_verification_code(self, email: str, code: str, expires_minutes: int = 10) -> bool:
+        """保存邮箱验证码"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                expires_at = time.time() + (expires_minutes * 60)
+
+                cursor.execute('''
+                INSERT INTO email_verifications (email, code, expires_at)
+                VALUES (?, ?, ?)
+                ''', (email, code, expires_at))
+
+                self.conn.commit()
+                logger.info(f"保存验证码成功: {email}")
+                return True
+            except Exception as e:
+                logger.error(f"保存验证码失败: {e}")
+                self.conn.rollback()
+                return False
+
+    def verify_email_code(self, email: str, code: str) -> bool:
+        """验证邮箱验证码"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                current_time = time.time()
+
+                # 查找有效的验证码
+                cursor.execute('''
+                SELECT id FROM email_verifications
+                WHERE email = ? AND code = ? AND expires_at > ? AND used = FALSE
+                ORDER BY created_at DESC LIMIT 1
+                ''', (email, code, current_time))
+
+                row = cursor.fetchone()
+                if row:
+                    # 标记验证码为已使用
+                    cursor.execute('''
+                    UPDATE email_verifications SET used = TRUE WHERE id = ?
+                    ''', (row[0],))
+                    self.conn.commit()
+                    logger.info(f"验证码验证成功: {email}")
+                    return True
+                else:
+                    logger.warning(f"验证码验证失败: {email} - {code}")
+                    return False
+            except Exception as e:
+                logger.error(f"验证邮箱验证码失败: {e}")
+                return False
+
+    async def send_verification_email(self, email: str, code: str) -> bool:
+        """发送验证码邮件"""
+        try:
+            subject = "闲鱼自动回复系统 - 邮箱验证码"
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>邮箱验证码</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }}
+                    .container {{ max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                    .header {{ text-align: center; margin-bottom: 30px; }}
+                    .logo {{ font-size: 24px; font-weight: bold; color: #1890ff; margin-bottom: 10px; }}
+                    .title {{ font-size: 20px; color: #333; margin-bottom: 20px; }}
+                    .code-box {{ background-color: #f8f9fa; border: 2px dashed #1890ff; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px; }}
+                    .code {{ font-size: 32px; font-weight: bold; color: #1890ff; letter-spacing: 5px; }}
+                    .info {{ color: #666; line-height: 1.6; margin: 20px 0; }}
+                    .warning {{ background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; color: #856404; margin: 20px 0; }}
+                    .footer {{ text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #999; font-size: 14px; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <div class="logo">🤖 闲鱼自动回复系统</div>
+                        <div class="title">邮箱验证码</div>
+                    </div>
+
+                    <div class="info">
+                        您好！<br><br>
+                        您正在注册闲鱼自动回复系统账号，请使用以下验证码完成邮箱验证：
+                    </div>
+
+                    <div class="code-box">
+                        <div class="code">{code}</div>
+                    </div>
+
+                    <div class="warning">
+                        <strong>⚠️ 重要提醒：</strong><br>
+                        • 验证码有效期为 10 分钟<br>
+                        • 请勿将验证码告诉他人<br>
+                        • 如果您没有进行此操作，请忽略此邮件
+                    </div>
+
+                    <div class="info">
+                        如有任何问题，请联系系统管理员。<br>
+                        感谢您使用闲鱼自动回复系统！
+                    </div>
+
+                    <div class="footer">
+                        此邮件由系统自动发送，请勿回复<br>
+                        © 2025 闲鱼自动回复系统
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+
+            # 调用邮件发送API
+            api_url = "https://dy.zhinianboke.com/api/emailSend"
+            params = {
+                'subject': subject,
+                'receiveUser': email,
+                'sendHtml': html_content
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(api_url, params=params) as response:
+                    if response.status == 200:
+                        logger.info(f"验证码邮件发送成功: {email}")
+                        return True
+                    else:
+                        logger.error(f"验证码邮件发送失败: {email}, 状态码: {response.status}")
+                        return False
+
+        except Exception as e:
+            logger.error(f"发送验证码邮件异常: {e}")
+            return False
+
     # ==================== 卡券管理方法 ====================
 
     def create_card(self, name: str, card_type: str, api_config=None,
                    text_content: str = None, data_content: str = None,
-                   description: str = None, enabled: bool = True):
+                   description: str = None, enabled: bool = True, user_id: int = None):
         """创建新卡券"""
         with self.lock:
             try:
@@ -1063,10 +1511,10 @@ class DBManager:
                 cursor = self.conn.cursor()
                 cursor.execute('''
                 INSERT INTO cards (name, type, api_config, text_content, data_content,
-                                 description, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                 description, enabled, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (name, card_type, api_config_str, text_content, data_content,
-                      description, enabled))
+                      description, enabled, user_id))
                 self.conn.commit()
                 card_id = cursor.lastrowid
                 logger.info(f"创建卡券成功: {name} (ID: {card_id})")
@@ -1075,17 +1523,26 @@ class DBManager:
                 logger.error(f"创建卡券失败: {e}")
                 raise
 
-    def get_all_cards(self):
-        """获取所有卡券"""
+    def get_all_cards(self, user_id: int = None):
+        """获取所有卡券（支持用户隔离）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cursor.execute('''
-                SELECT id, name, type, api_config, text_content, data_content,
-                       description, enabled, created_at, updated_at
-                FROM cards
-                ORDER BY created_at DESC
-                ''')
+                if user_id is not None:
+                    cursor.execute('''
+                    SELECT id, name, type, api_config, text_content, data_content,
+                           description, enabled, created_at, updated_at
+                    FROM cards
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    ''', (user_id,))
+                else:
+                    cursor.execute('''
+                    SELECT id, name, type, api_config, text_content, data_content,
+                           description, enabled, created_at, updated_at
+                    FROM cards
+                    ORDER BY created_at DESC
+                    ''')
 
                 cards = []
                 for row in cursor.fetchall():
@@ -1117,16 +1574,23 @@ class DBManager:
                 logger.error(f"获取卡券列表失败: {e}")
                 return []
 
-    def get_card_by_id(self, card_id: int):
-        """根据ID获取卡券"""
+    def get_card_by_id(self, card_id: int, user_id: int = None):
+        """根据ID获取卡券（支持用户隔离）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cursor.execute('''
-                SELECT id, name, type, api_config, text_content, data_content,
-                       description, enabled, created_at, updated_at
-                FROM cards WHERE id = ?
-                ''', (card_id,))
+                if user_id is not None:
+                    cursor.execute('''
+                    SELECT id, name, type, api_config, text_content, data_content,
+                           description, enabled, created_at, updated_at
+                    FROM cards WHERE id = ? AND user_id = ?
+                    ''', (card_id, user_id))
+                else:
+                    cursor.execute('''
+                    SELECT id, name, type, api_config, text_content, data_content,
+                           description, enabled, created_at, updated_at
+                    FROM cards WHERE id = ?
+                    ''', (card_id,))
 
                 row = cursor.fetchone()
                 if row:
@@ -2023,6 +2487,270 @@ class DBManager:
             except:
                 pass
             return success_count
+
+    # ==================== 用户设置管理方法 ====================
+
+    def get_user_settings(self, user_id: int):
+        """获取用户的所有设置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT key, value, description, updated_at
+                FROM user_settings
+                WHERE user_id = ?
+                ORDER BY key
+                ''', (user_id,))
+
+                settings = {}
+                for row in cursor.fetchall():
+                    settings[row[0]] = {
+                        'value': row[1],
+                        'description': row[2],
+                        'updated_at': row[3]
+                    }
+
+                return settings
+            except Exception as e:
+                logger.error(f"获取用户设置失败: {e}")
+                return {}
+
+    def get_user_setting(self, user_id: int, key: str):
+        """获取用户的特定设置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT value, description, updated_at
+                FROM user_settings
+                WHERE user_id = ? AND key = ?
+                ''', (user_id, key))
+
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'key': key,
+                        'value': row[0],
+                        'description': row[1],
+                        'updated_at': row[2]
+                    }
+                return None
+            except Exception as e:
+                logger.error(f"获取用户设置失败: {e}")
+                return None
+
+    def set_user_setting(self, user_id: int, key: str, value: str, description: str = None):
+        """设置用户配置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                INSERT OR REPLACE INTO user_settings (user_id, key, value, description, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (user_id, key, value, description))
+
+                self.conn.commit()
+                logger.info(f"用户设置更新成功: user_id={user_id}, key={key}")
+                return True
+            except Exception as e:
+                logger.error(f"设置用户配置失败: {e}")
+                self.conn.rollback()
+                return False
+
+    # ==================== 管理员专用方法 ====================
+
+    def get_all_users(self):
+        """获取所有用户信息（管理员专用）"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT id, username, email, created_at, updated_at
+                FROM users
+                ORDER BY created_at DESC
+                ''')
+
+                users = []
+                for row in cursor.fetchall():
+                    users.append({
+                        'id': row[0],
+                        'username': row[1],
+                        'email': row[2],
+                        'created_at': row[3],
+                        'updated_at': row[4]
+                    })
+
+                return users
+            except Exception as e:
+                logger.error(f"获取所有用户失败: {e}")
+                return []
+
+    def get_user_by_id(self, user_id: int):
+        """根据ID获取用户信息"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT id, username, email, created_at, updated_at
+                FROM users
+                WHERE id = ?
+                ''', (user_id,))
+
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'username': row[1],
+                        'email': row[2],
+                        'created_at': row[3],
+                        'updated_at': row[4]
+                    }
+                return None
+            except Exception as e:
+                logger.error(f"获取用户信息失败: {e}")
+                return None
+
+    def delete_user_and_data(self, user_id: int):
+        """删除用户及其所有相关数据"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 开始事务
+                cursor.execute('BEGIN TRANSACTION')
+
+                # 删除用户相关的所有数据
+                # 1. 删除用户设置
+                cursor.execute('DELETE FROM user_settings WHERE user_id = ?', (user_id,))
+
+                # 2. 删除用户的卡券
+                cursor.execute('DELETE FROM cards WHERE user_id = ?', (user_id,))
+
+                # 3. 删除用户的发货规则
+                cursor.execute('DELETE FROM delivery_rules WHERE user_id = ?', (user_id,))
+
+                # 4. 删除用户的通知渠道
+                cursor.execute('DELETE FROM notification_channels WHERE user_id = ?', (user_id,))
+
+                # 5. 删除用户的Cookie
+                cursor.execute('DELETE FROM cookies WHERE user_id = ?', (user_id,))
+
+                # 6. 删除用户的关键字
+                cursor.execute('DELETE FROM keywords WHERE cookie_id IN (SELECT id FROM cookies WHERE user_id = ?)', (user_id,))
+
+                # 7. 删除用户的默认回复
+                cursor.execute('DELETE FROM default_replies WHERE cookie_id IN (SELECT id FROM cookies WHERE user_id = ?)', (user_id,))
+
+                # 8. 删除用户的AI回复设置
+                cursor.execute('DELETE FROM ai_reply_settings WHERE cookie_id IN (SELECT id FROM cookies WHERE user_id = ?)', (user_id,))
+
+                # 9. 删除用户的消息通知
+                cursor.execute('DELETE FROM message_notifications WHERE cookie_id IN (SELECT id FROM cookies WHERE user_id = ?)', (user_id,))
+
+                # 10. 最后删除用户本身
+                cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+
+                # 提交事务
+                cursor.execute('COMMIT')
+
+                logger.info(f"用户及相关数据删除成功: user_id={user_id}")
+                return True
+
+            except Exception as e:
+                # 回滚事务
+                cursor.execute('ROLLBACK')
+                logger.error(f"删除用户及相关数据失败: {e}")
+                return False
+
+    def get_table_data(self, table_name: str):
+        """获取指定表的所有数据"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 获取表结构
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns_info = cursor.fetchall()
+                columns = [col[1] for col in columns_info]  # 列名
+
+                # 获取表数据
+                cursor.execute(f"SELECT * FROM {table_name}")
+                rows = cursor.fetchall()
+
+                # 转换为字典列表
+                data = []
+                for row in rows:
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        row_dict[columns[i]] = value
+                    data.append(row_dict)
+
+                return data, columns
+
+            except Exception as e:
+                logger.error(f"获取表数据失败: {table_name} - {e}")
+                return [], []
+
+    def delete_table_record(self, table_name: str, record_id: str):
+        """删除指定表的指定记录"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 根据表名确定主键字段
+                primary_key_map = {
+                    'users': 'id',
+                    'cookies': 'id',
+                    'keywords': 'id',
+                    'default_replies': 'id',
+                    'ai_reply_settings': 'id',
+                    'message_notifications': 'id',
+                    'cards': 'id',
+                    'delivery_rules': 'id',
+                    'notification_channels': 'id',
+                    'user_settings': 'id',
+                    'email_verifications': 'id',
+                    'captcha_codes': 'id'
+                }
+
+                primary_key = primary_key_map.get(table_name, 'id')
+
+                # 删除记录
+                cursor.execute(f"DELETE FROM {table_name} WHERE {primary_key} = ?", (record_id,))
+
+                if cursor.rowcount > 0:
+                    self.conn.commit()
+                    logger.info(f"删除表记录成功: {table_name}.{record_id}")
+                    return True
+                else:
+                    logger.warning(f"删除表记录失败，记录不存在: {table_name}.{record_id}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"删除表记录失败: {table_name}.{record_id} - {e}")
+                self.conn.rollback()
+                return False
+
+    def clear_table_data(self, table_name: str):
+        """清空指定表的所有数据"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 清空表数据
+                cursor.execute(f"DELETE FROM {table_name}")
+
+                # 重置自增ID（如果有的话）
+                cursor.execute(f"DELETE FROM sqlite_sequence WHERE name = ?", (table_name,))
+
+                self.conn.commit()
+                logger.info(f"清空表数据成功: {table_name}")
+                return True
+
+            except Exception as e:
+                logger.error(f"清空表数据失败: {table_name} - {e}")
+                self.conn.rollback()
+                return False
 
 
 # 全局单例

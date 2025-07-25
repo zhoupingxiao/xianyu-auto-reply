@@ -131,7 +131,7 @@ class XianyuLive:
     async def refresh_token(self):
         """刷新token"""
         try:
-            logger.info("开始刷新token...")
+            logger.info(f"【{self.cookie_id}】开始刷新token...")
             params = {
                 'jsv': '2.7.2',
                 'appKey': '34839810',
@@ -197,10 +197,10 @@ class XianyuLive:
                                 new_token = res_json['data']['accessToken']
                                 self.current_token = new_token
                                 self.last_token_refresh_time = time.time()
-                                logger.info("Token刷新成功")
+                                logger.info(f"【{self.cookie_id}】Token刷新成功")
                                 return new_token
                             
-                    logger.error(f"Token刷新失败: {res_json}")
+                    logger.error(f"【{self.cookie_id}】Token刷新失败: {res_json}")
                     # 发送Token刷新失败通知
                     await self.send_token_refresh_notification(f"Token刷新失败: {res_json}", "token_refresh_failed")
                     return None
@@ -630,7 +630,7 @@ class XianyuLive:
                     import re
                     id_match = re.search(r'(\d{10,})', content)
                     if id_match:
-                        logger.info(f"从消息内容中提取商品ID: {id_match.group(1)}")
+                        logger.info(f"【{self.cookie_id}】从消息内容中提取商品ID: {id_match.group(1)}")
                         return id_match.group(1)
 
             # 方法3: 遍历整个消息结构查找可能的商品ID
@@ -716,7 +716,7 @@ class XianyuLive:
                     send_user_id=send_user_id,
                     send_message=send_message
                 )
-                logger.info(f"使用默认回复: {formatted_reply}")
+                logger.info(f"【{self.cookie_id}】使用默认回复: {formatted_reply}")
                 return formatted_reply
             except Exception as format_error:
                 logger.error(f"默认回复变量替换失败: {self._safe_str(format_error)}")
@@ -804,7 +804,7 @@ class XianyuLive:
             )
 
             if reply:
-                logger.info(f"AI回复生成成功: {reply}")
+                logger.info(f"【{self.cookie_id}】AI回复生成成功: {reply}")
                 return reply
             else:
                 logger.debug(f"AI回复生成失败")
@@ -1268,13 +1268,13 @@ class XianyuLive:
                     logger.info("Token即将过期，准备刷新...")
                     new_token = await self.refresh_token()
                     if new_token:
-                        logger.info("Token刷新成功，准备重新建立连接...")
+                        logger.info(f"【{self.cookie_id}】Token刷新成功，准备重新建立连接...")
                         self.connection_restart_flag = True
                         if self.ws:
                             await self.ws.close()
                         break
                     else:
-                        logger.error("Token刷新失败，将在{}分钟后重试".format(self.token_retry_interval // 60))
+                        logger.error(f"【{self.cookie_id}】Token刷新失败，将在{self.token_retry_interval // 60}分钟后重试")
                         # 发送Token刷新失败通知
                         await self.send_token_refresh_notification("Token定时刷新失败，将自动重试", "token_scheduled_refresh_failed")
                         await asyncio.sleep(self.token_retry_interval)
@@ -1357,7 +1357,7 @@ class XianyuLive:
         # 如果没有token或者token过期，获取新token
         token_refresh_attempted = False
         if not self.current_token or (time.time() - self.last_token_refresh_time) >= self.token_refresh_interval:
-            logger.info("获取初始token...")
+            logger.info(f"【{self.cookie_id}】获取初始token...")
             token_refresh_attempted = True
             await self.refresh_token()
 
@@ -1404,7 +1404,7 @@ class XianyuLive:
             ]
         }
         await ws.send(json.dumps(msg))
-        logger.info('连接注册完成')
+        logger.info(f'【{self.cookie_id}】连接注册完成')
 
     async def send_heartbeat(self, ws):
         """发送心跳包"""
@@ -1505,12 +1505,12 @@ class XianyuLive:
         await self.create_chat(websocket, toid, item_id)
         async for message in websocket:
             try:
-                logger.info(f"message: {message}")
+                logger.info(f"【{self.cookie_id}】message: {message}")
                 message = json.loads(message)
                 cid = message["body"]["singleChatConversation"]["cid"]
                 cid = cid.split('@')[0]
                 await self.send_msg(websocket, cid, toid, text)
-                logger.info('send message')
+                logger.info(f'【{self.cookie_id}】send message')
                 return
             except Exception as e:
                 pass
@@ -1660,13 +1660,13 @@ class XianyuLive:
                             content = parsed_data['operation']['content']
                             if 'sessionArouse' in content:
                                 # 处理系统引导消息
-                                logger.info(f"[{msg_time}] 【系统】小闲鱼智能提示:")
+                                logger.info(f"[{msg_time}] 【{self.cookie_id}】【系统】小闲鱼智能提示:")
                                 if 'arouseChatScriptInfo' in content['sessionArouse']:
                                     for qa in content['sessionArouse']['arouseChatScriptInfo']:
                                         logger.info(f"  - {qa['chatScrip']}")
                             elif 'contentType' in content:
                                 # 其他类型的未加密消息
-                                logger.debug(f"[{msg_time}] 【系统】其他类型消息: {content}")
+                                logger.debug(f"[{msg_time}] 【{self.cookie_id}】【系统】其他类型消息: {content}")
                         return
                     else:
                         # 如果不是系统消息，将解析的数据作为message
@@ -1833,7 +1833,7 @@ class XianyuLive:
 
             # 自动回复消息
             if not AUTO_REPLY.get('enabled', True):
-                logger.info(f"[{msg_time}] 【系统】自动回复已禁用")
+                logger.info(f"[{msg_time}] 【{self.cookie_id}】【系统】自动回复已禁用")
                 return
 
             # 构造用户URL
@@ -1850,13 +1850,13 @@ class XianyuLive:
                     logger.error(f"[{msg_time}] 【API调用失败】用户: {send_user_name} (ID: {send_user_id}), 商品({item_id}): {send_message}")
             
             if send_message == '[我已拍下，待付款]':
-                logger.info(f'[{msg_time}] 系统消息不处理')
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】系统消息不处理')
                 return
             elif send_message == '[你关闭了订单，钱款已原路退返]':
-                logger.info(f'[{msg_time}] 系统消息不处理')
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】系统消息不处理')
                 return
             elif send_message == '[我已付款，等待你发货]':
-                logger.info(f'[{msg_time}] 【系统】买家已付款，准备自动发货')
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】买家已付款，准备自动发货')
 
                 # 构造用户URL
                 user_url = f'https://www.goofish.com/personal?userId={send_user_id}'
@@ -1866,7 +1866,7 @@ class XianyuLive:
                     # 设置默认标题（将通过API获取真实商品信息）
                     item_title = "待获取商品信息"
 
-                    logger.info(f"准备自动发货: item_id={item_id}, item_title={item_title}")
+                    logger.info(f"【{self.cookie_id}】准备自动发货: item_id={item_id}, item_title={item_title}")
 
                     # 调用自动发货方法
                     delivery_content = await self._auto_delivery(item_id, item_title)
@@ -1888,7 +1888,7 @@ class XianyuLive:
 
                 return
             elif send_message == '[已付款，待发货]':
-                logger.info(f'[{msg_time}] 【系统】买家已付款，准备自动发货')
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】买家已付款，准备自动发货')
 
                 # 构造用户URL
                 user_url = f'https://www.goofish.com/personal?userId={send_user_id}'
@@ -1898,7 +1898,7 @@ class XianyuLive:
                     # 设置默认标题（将通过API获取真实商品信息）
                     item_title = "待获取商品信息"
 
-                    logger.info(f"准备自动发货: item_id={item_id}, item_title={item_title}")
+                    logger.info(f"【{self.cookie_id}】准备自动发货: item_id={item_id}, item_title={item_title}")
 
                     # 调用自动发货方法
                     delivery_content = await self._auto_delivery(item_id, item_title)
@@ -1952,7 +1952,7 @@ class XianyuLive:
                 logger.info(f"[{msg_time}] 【{reply_source}发出】用户: {send_user_name} (ID: {send_user_id}), 商品({item_id}): {reply}")
             else:
                 msg_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                logger.info(f"[{msg_time}] 【系统】未找到匹配的回复规则，不回复")
+                logger.info(f"[{msg_time}] 【{self.cookie_id}】【系统】未找到匹配的回复规则，不回复")
             
         except Exception as e:
             logger.error(f"处理消息时发生错误: {self._safe_str(e)}")

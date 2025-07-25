@@ -31,3 +31,6 @@ python-multipart>=0.0.6
 # AI回复相关
 openai>=1.65.5
 python-dotenv>=1.0.1
+
+# 图像处理（图形验证码）
+Pillow>=10.0.0
