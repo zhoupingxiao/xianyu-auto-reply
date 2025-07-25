@@ -82,6 +82,10 @@ class XianyuLive:
         self.current_token = None
         self.token_refresh_task = None
         self.connection_restart_flag = False  # 连接重启标志
+
+        # 通知防重复机制
+        self.last_notification_time = {}  # 记录每种通知类型的最后发送时间
+        self.notification_cooldown = 300  # 5分钟内不重复发送相同类型的通知
         
         # 人工接管功能已禁用，永远走自动模式
         # self.manual_mode_conversations = set()  # 存储处于人工接管模式的会话ID
@@ -198,13 +202,13 @@ class XianyuLive:
                             
                     logger.error(f"Token刷新失败: {res_json}")
                     # 发送Token刷新失败通知
-                    await self.send_token_refresh_notification(f"Token刷新失败: {res_json}")
+                    await self.send_token_refresh_notification(f"Token刷新失败: {res_json}", "token_refresh_failed")
                     return None
 
         except Exception as e:
             logger.error(f"Token刷新异常: {self._safe_str(e)}")
             # 发送Token刷新异常通知
-            await self.send_token_refresh_notification(f"Token刷新异常: {str(e)}")
+            await self.send_token_refresh_notification(f"Token刷新异常: {str(e)}", "token_refresh_exception")
             return None
 
     async def update_config_cookies(self):
@@ -220,16 +224,16 @@ class XianyuLive:
                 except Exception as e:
                     logger.error(f"更新数据库Cookie失败: {self._safe_str(e)}")
                     # 发送数据库更新失败通知
-                    await self.send_token_refresh_notification(f"数据库Cookie更新失败: {str(e)}")
+                    await self.send_token_refresh_notification(f"数据库Cookie更新失败: {str(e)}", "db_update_failed")
             else:
                 logger.warning("Cookie ID不存在，无法更新数据库")
                 # 发送Cookie ID缺失通知
-                await self.send_token_refresh_notification("Cookie ID不存在，无法更新数据库")
+                await self.send_token_refresh_notification("Cookie ID不存在，无法更新数据库", "cookie_id_missing")
 
         except Exception as e:
             logger.error(f"更新Cookie失败: {self._safe_str(e)}")
             # 发送Cookie更新失败通知
-            await self.send_token_refresh_notification(f"Cookie更新失败: {str(e)}")
+            await self.send_token_refresh_notification(f"Cookie更新失败: {str(e)}", "cookie_update_failed")
 
     async def save_item_info_to_db(self, item_id: str, item_detail: str = None):
         """保存商品信息到数据库
@@ -895,9 +899,22 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"发送QQ通知异常: {self._safe_str(e)}")
 
-    async def send_token_refresh_notification(self, error_message: str):
-        """发送Token刷新异常通知"""
+    async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh"):
+        """发送Token刷新异常通知（带防重复机制）"""
         try:
+            # 检查是否是正常的令牌过期，这种情况不需要发送通知
+            if self._is_normal_token_expiry(error_message):
+                logger.debug(f"检测到正常的令牌过期，跳过通知: {error_message}")
+                return
+
+            # 检查是否在冷却期内
+            current_time = time.time()
+            last_time = self.last_notification_time.get(notification_type, 0)
+
+            if current_time - last_time < self.notification_cooldown:
+                logger.debug(f"通知在冷却期内，跳过发送: {notification_type} (距离上次 {int(current_time - last_time)} 秒)")
+                return
+
             from db_manager import db_manager
 
             # 获取当前账号的通知配置
@@ -919,6 +936,7 @@ class XianyuLive:
             logger.info(f"准备发送Token刷新异常通知: {self.cookie_id}")
 
             # 发送通知到各个渠道
+            notification_sent = False
             for notification in notifications:
                 if not notification.get('enabled', True):
                     continue
@@ -929,14 +947,38 @@ class XianyuLive:
                 try:
                     if channel_type == 'qq':
                         await self._send_qq_notification(channel_config, notification_msg)
+                        notification_sent = True
                     else:
                         logger.warning(f"不支持的通知渠道类型: {channel_type}")
 
                 except Exception as notify_error:
                     logger.error(f"发送Token刷新通知失败 ({notification.get('channel_name', 'Unknown')}): {self._safe_str(notify_error)}")
 
+            # 如果成功发送了通知，更新最后发送时间
+            if notification_sent:
+                self.last_notification_time[notification_type] = current_time
+                logger.info(f"Token刷新通知已发送，下次可发送时间: {time.strftime('%H:%M:%S', time.localtime(current_time + self.notification_cooldown))}")
+
         except Exception as e:
             logger.error(f"处理Token刷新通知失败: {self._safe_str(e)}")
+
+    def _is_normal_token_expiry(self, error_message: str) -> bool:
+        """检查是否是正常的令牌过期（这种情况不需要发送通知）"""
+        # 正常的令牌过期关键词
+        normal_expiry_keywords = [
+            'FAIL_SYS_TOKEN_EXOIRED::令牌过期',
+            'FAIL_SYS_TOKEN_EXPIRED::令牌过期',
+            'FAIL_SYS_TOKEN_EXOIRED',
+            'FAIL_SYS_TOKEN_EXPIRED',
+            '令牌过期'
+        ]
+
+        # 检查错误消息是否包含正常的令牌过期关键词
+        for keyword in normal_expiry_keywords:
+            if keyword in error_message:
+                return True
+
+        return False
 
     async def send_delivery_failure_notification(self, send_user_name: str, send_user_id: str, item_id: str, error_message: str):
         """发送自动发货失败通知"""
@@ -1234,7 +1276,7 @@ class XianyuLive:
                     else:
                         logger.error("Token刷新失败，将在{}分钟后重试".format(self.token_retry_interval // 60))
                         # 发送Token刷新失败通知
-                        await self.send_token_refresh_notification("Token定时刷新失败，将自动重试")
+                        await self.send_token_refresh_notification("Token定时刷新失败，将自动重试", "token_scheduled_refresh_failed")
                         await asyncio.sleep(self.token_retry_interval)
                         continue
                 await asyncio.sleep(60)
@@ -1313,14 +1355,19 @@ class XianyuLive:
 
     async def init(self, ws):
         # 如果没有token或者token过期，获取新token
+        token_refresh_attempted = False
         if not self.current_token or (time.time() - self.last_token_refresh_time) >= self.token_refresh_interval:
             logger.info("获取初始token...")
+            token_refresh_attempted = True
             await self.refresh_token()
-        
+
         if not self.current_token:
             logger.error("无法获取有效token，初始化失败")
-            # 发送Token获取失败通知
-            await self.send_token_refresh_notification("初始化时无法获取有效Token")
+            # 只有在没有尝试刷新token的情况下才发送通知，避免与refresh_token中的通知重复
+            if not token_refresh_attempted:
+                await self.send_token_refresh_notification("初始化时无法获取有效Token", "token_init_failed")
+            else:
+                logger.info("由于刚刚尝试过token刷新，跳过重复的初始化失败通知")
             raise Exception("Token获取失败")
             
         msg = {
