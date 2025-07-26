@@ -66,8 +66,10 @@ KEYWORDS_MAPPING = load_keywords()
 
 # 认证相关模型
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    email: Optional[str] = None
+    verification_code: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
@@ -91,7 +93,8 @@ class RegisterResponse(BaseModel):
 
 class SendCodeRequest(BaseModel):
     email: str
-    session_id: str
+    session_id: Optional[str] = None
+    type: Optional[str] = 'register'  # 'register' 或 'login'
 
 
 class SendCodeResponse(BaseModel):
@@ -414,38 +417,70 @@ async def data_management_page():
 async def login(request: LoginRequest):
     from db_manager import db_manager
 
-    logger.info(f"【{request.username}】尝试登录")
+    # 判断登录方式
+    if request.username and request.password:
+        # 用户名/密码登录
+        logger.info(f"【{request.username}】尝试用户名登录")
 
-    # 首先检查是否是admin用户（向后兼容）
-    if request.username == ADMIN_USERNAME and db_manager.verify_admin_password(request.password):
-        # 获取admin用户信息
-        admin_user = db_manager.get_user_by_username('admin')
-        if admin_user:
-            user_id = admin_user['id']
-        else:
-            user_id = 1  # 默认admin用户ID
+        # 首先检查是否是admin用户（向后兼容）
+        if request.username == ADMIN_USERNAME and db_manager.verify_admin_password(request.password):
+            # 获取admin用户信息
+            admin_user = db_manager.get_user_by_username('admin')
+            if admin_user:
+                user_id = admin_user['id']
+            else:
+                user_id = 1  # 默认admin用户ID
 
-        # 生成token
-        token = generate_token()
-        SESSION_TOKENS[token] = {
-            'user_id': user_id,
-            'username': 'admin',
-            'timestamp': time.time()
-        }
+            # 生成token
+            token = generate_token()
+            SESSION_TOKENS[token] = {
+                'user_id': user_id,
+                'username': 'admin',
+                'timestamp': time.time()
+            }
 
-        logger.info(f"【admin#{user_id}】登录成功（管理员）")
+            logger.info(f"【admin#{user_id}】登录成功（管理员）")
 
+            return LoginResponse(
+                success=True,
+                token=token,
+                message="登录成功",
+                user_id=user_id
+            )
+
+        # 检查普通用户
+        if db_manager.verify_user_password(request.username, request.password):
+            user = db_manager.get_user_by_username(request.username)
+            if user:
+                # 生成token
+                token = generate_token()
+                SESSION_TOKENS[token] = {
+                    'user_id': user['id'],
+                    'username': user['username'],
+                    'timestamp': time.time()
+                }
+
+                logger.info(f"【{user['username']}#{user['id']}】登录成功")
+
+                return LoginResponse(
+                    success=True,
+                    token=token,
+                    message="登录成功",
+                    user_id=user['id']
+                )
+
+        logger.warning(f"【{request.username}】登录失败：用户名或密码错误")
         return LoginResponse(
-            success=True,
-            token=token,
-            message="登录成功",
-            user_id=user_id
+            success=False,
+            message="用户名或密码错误"
         )
 
-    # 检查普通用户
-    if db_manager.verify_user_password(request.username, request.password):
-        user = db_manager.get_user_by_username(request.username)
-        if user:
+    elif request.email and request.password:
+        # 邮箱/密码登录
+        logger.info(f"【{request.email}】尝试邮箱密码登录")
+
+        user = db_manager.get_user_by_email(request.email)
+        if user and db_manager.verify_user_password(user['username'], request.password):
             # 生成token
             token = generate_token()
             SESSION_TOKENS[token] = {
@@ -454,7 +489,7 @@ async def login(request: LoginRequest):
                 'timestamp': time.time()
             }
 
-            logger.info(f"【{user['username']}#{user['id']}】登录成功")
+            logger.info(f"【{user['username']}#{user['id']}】邮箱登录成功")
 
             return LoginResponse(
                 success=True,
@@ -463,11 +498,55 @@ async def login(request: LoginRequest):
                 user_id=user['id']
             )
 
-    logger.warning(f"【{request.username}】登录失败: 用户名或密码错误")
-    return LoginResponse(
-        success=False,
-        message="用户名或密码错误"
-    )
+        logger.warning(f"【{request.email}】邮箱登录失败：邮箱或密码错误")
+        return LoginResponse(
+            success=False,
+            message="邮箱或密码错误"
+        )
+
+    elif request.email and request.verification_code:
+        # 邮箱/验证码登录
+        logger.info(f"【{request.email}】尝试邮箱验证码登录")
+
+        # 验证邮箱验证码
+        if not db_manager.verify_email_code(request.email, request.verification_code, 'login'):
+            logger.warning(f"【{request.email}】验证码登录失败：验证码错误或已过期")
+            return LoginResponse(
+                success=False,
+                message="验证码错误或已过期"
+            )
+
+        # 获取用户信息
+        user = db_manager.get_user_by_email(request.email)
+        if not user:
+            logger.warning(f"【{request.email}】验证码登录失败：用户不存在")
+            return LoginResponse(
+                success=False,
+                message="用户不存在"
+            )
+
+        # 生成token
+        token = generate_token()
+        SESSION_TOKENS[token] = {
+            'user_id': user['id'],
+            'username': user['username'],
+            'timestamp': time.time()
+        }
+
+        logger.info(f"【{user['username']}#{user['id']}】验证码登录成功")
+
+        return LoginResponse(
+            success=True,
+            token=token,
+            message="登录成功",
+            user_id=user['id']
+        )
+
+    else:
+        return LoginResponse(
+            success=False,
+            message="请提供有效的登录信息"
+        )
 
 
 # 验证token接口
@@ -578,19 +657,29 @@ async def send_verification_code(request: SendCodeRequest):
             # 或者我们可以在验证成功后设置一个临时标记
             pass
 
-        # 检查邮箱是否已注册
-        existing_user = db_manager.get_user_by_email(request.email)
-        if existing_user:
-            return SendCodeResponse(
-                success=False,
-                message="该邮箱已被注册"
-            )
+        # 根据验证码类型进行不同的检查
+        if request.type == 'register':
+            # 注册验证码：检查邮箱是否已注册
+            existing_user = db_manager.get_user_by_email(request.email)
+            if existing_user:
+                return SendCodeResponse(
+                    success=False,
+                    message="该邮箱已被注册"
+                )
+        elif request.type == 'login':
+            # 登录验证码：检查邮箱是否存在
+            existing_user = db_manager.get_user_by_email(request.email)
+            if not existing_user:
+                return SendCodeResponse(
+                    success=False,
+                    message="该邮箱未注册"
+                )
 
         # 生成验证码
         code = db_manager.generate_verification_code()
 
         # 保存验证码到数据库
-        if not db_manager.save_verification_code(request.email, code):
+        if not db_manager.save_verification_code(request.email, code, request.type):
             return SendCodeResponse(
                 success=False,
                 message="验证码保存失败，请稍后重试"
@@ -788,7 +877,7 @@ def add_cookie(item: CookieIn, current_user: Dict[str, Any] = Depends(get_curren
         user_id = current_user['user_id']
         from db_manager import db_manager
 
-        log_with_user('info', f"尝试添加Cookie: {item.id}", current_user)
+        log_with_user('info', f"尝试添加Cookie: {item.id}, 当前用户ID: {user_id}, 用户名: {current_user.get('username', 'unknown')}", current_user)
 
         # 检查cookie是否已存在且属于其他用户
         existing_cookies = db_manager.get_all_cookies()
@@ -802,8 +891,8 @@ def add_cookie(item: CookieIn, current_user: Dict[str, Any] = Depends(get_curren
         # 保存到数据库时指定用户ID
         db_manager.save_cookie(item.id, item.value, user_id)
 
-        # 添加到CookieManager
-        cookie_manager.manager.add_cookie(item.id, item.value)
+        # 添加到CookieManager，同时指定用户ID
+        cookie_manager.manager.add_cookie(item.id, item.value, user_id=user_id)
         log_with_user('info', f"Cookie添加成功: {item.id}", current_user)
         return {"msg": "success"}
     except HTTPException:
@@ -946,24 +1035,27 @@ def delete_default_reply(cid: str, current_user: Dict[str, Any] = Depends(get_cu
 # ------------------------- 通知渠道管理接口 -------------------------
 
 @app.get('/notification-channels')
-def get_notification_channels(_: None = Depends(require_auth)):
+def get_notification_channels(current_user: Dict[str, Any] = Depends(get_current_user)):
     """获取所有通知渠道"""
     from db_manager import db_manager
     try:
-        return db_manager.get_notification_channels()
+        user_id = current_user['user_id']
+        return db_manager.get_notification_channels(user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post('/notification-channels')
-def create_notification_channel(channel_data: NotificationChannelIn, _: None = Depends(require_auth)):
+def create_notification_channel(channel_data: NotificationChannelIn, current_user: Dict[str, Any] = Depends(get_current_user)):
     """创建通知渠道"""
     from db_manager import db_manager
     try:
+        user_id = current_user['user_id']
         channel_id = db_manager.create_notification_channel(
             channel_data.name,
             channel_data.type,
-            channel_data.config
+            channel_data.config,
+            user_id
         )
         return {'msg': 'notification channel created', 'id': channel_id}
     except Exception as e:
@@ -1327,27 +1419,30 @@ def update_card(card_id: int, card_data: dict, _: None = Depends(require_auth)):
 
 # 自动发货规则API
 @app.get("/delivery-rules")
-def get_delivery_rules(_: None = Depends(require_auth)):
+def get_delivery_rules(current_user: Dict[str, Any] = Depends(get_current_user)):
     """获取发货规则列表"""
     try:
         from db_manager import db_manager
-        rules = db_manager.get_all_delivery_rules()
+        user_id = current_user['user_id']
+        rules = db_manager.get_all_delivery_rules(user_id)
         return rules
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/delivery-rules")
-def create_delivery_rule(rule_data: dict, _: None = Depends(require_auth)):
+def create_delivery_rule(rule_data: dict, current_user: Dict[str, Any] = Depends(get_current_user)):
     """创建新发货规则"""
     try:
         from db_manager import db_manager
+        user_id = current_user['user_id']
         rule_id = db_manager.create_delivery_rule(
             keyword=rule_data.get('keyword'),
             card_id=rule_data.get('card_id'),
             delivery_count=rule_data.get('delivery_count', 1),
             enabled=rule_data.get('enabled', True),
-            description=rule_data.get('description')
+            description=rule_data.get('description'),
+            user_id=user_id
         )
         return {"id": rule_id, "message": "发货规则创建成功"}
     except Exception as e:
@@ -1355,11 +1450,12 @@ def create_delivery_rule(rule_data: dict, _: None = Depends(require_auth)):
 
 
 @app.get("/delivery-rules/{rule_id}")
-def get_delivery_rule(rule_id: int, _: None = Depends(require_auth)):
+def get_delivery_rule(rule_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
     """获取单个发货规则详情"""
     try:
         from db_manager import db_manager
-        rule = db_manager.get_delivery_rule_by_id(rule_id)
+        user_id = current_user['user_id']
+        rule = db_manager.get_delivery_rule_by_id(rule_id, user_id)
         if rule:
             return rule
         else:
@@ -1369,17 +1465,19 @@ def get_delivery_rule(rule_id: int, _: None = Depends(require_auth)):
 
 
 @app.put("/delivery-rules/{rule_id}")
-def update_delivery_rule(rule_id: int, rule_data: dict, _: None = Depends(require_auth)):
+def update_delivery_rule(rule_id: int, rule_data: dict, current_user: Dict[str, Any] = Depends(get_current_user)):
     """更新发货规则"""
     try:
         from db_manager import db_manager
+        user_id = current_user['user_id']
         success = db_manager.update_delivery_rule(
             rule_id=rule_id,
             keyword=rule_data.get('keyword'),
             card_id=rule_data.get('card_id'),
             delivery_count=rule_data.get('delivery_count', 1),
             enabled=rule_data.get('enabled', True),
-            description=rule_data.get('description')
+            description=rule_data.get('description'),
+            user_id=user_id
         )
         if success:
             return {"message": "发货规则更新成功"}
@@ -1404,11 +1502,12 @@ def delete_card(card_id: int, _: None = Depends(require_auth)):
 
 
 @app.delete("/delivery-rules/{rule_id}")
-def delete_delivery_rule(rule_id: int, _: None = Depends(require_auth)):
+def delete_delivery_rule(rule_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
     """删除发货规则"""
     try:
         from db_manager import db_manager
-        success = db_manager.delete_delivery_rule(rule_id)
+        user_id = current_user['user_id']
+        success = db_manager.delete_delivery_rule(rule_id, user_id)
         if success:
             return {"message": "发货规则删除成功"}
         else:

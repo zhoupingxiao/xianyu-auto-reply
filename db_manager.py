@@ -182,10 +182,22 @@ class DBManager:
                 data_content TEXT,
                 description TEXT,
                 enabled BOOLEAN DEFAULT TRUE,
+                user_id INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
             )
             ''')
+
+            # 检查并添加 user_id 列（用于数据库迁移）
+            try:
+                cursor.execute("SELECT user_id FROM cards LIMIT 1")
+            except sqlite3.OperationalError:
+                # user_id 列不存在，需要添加
+                logger.info("正在为 cards 表添加 user_id 列...")
+                cursor.execute("ALTER TABLE cards ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_cards_user_id ON cards(user_id)")
+                logger.info("cards 表 user_id 列添加完成")
 
             # 创建商品信息表
             cursor.execute('''
@@ -271,6 +283,21 @@ class DBManager:
             )
             ''')
 
+            # 创建用户设置表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user_id, key)
+            )
+            ''')
+
             # 插入默认系统设置
             cursor.execute('''
             INSERT OR IGNORE INTO system_settings (key, value, description) VALUES
@@ -300,6 +327,39 @@ class DBManager:
                 else:
                     # user_id列存在，更新NULL值
                     cursor.execute("UPDATE cookies SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
+
+                # 为delivery_rules表添加user_id字段（如果不存在）
+                try:
+                    cursor.execute("SELECT user_id FROM delivery_rules LIMIT 1")
+                except sqlite3.OperationalError:
+                    # user_id列不存在，需要添加并更新历史数据
+                    cursor.execute("ALTER TABLE delivery_rules ADD COLUMN user_id INTEGER")
+                    cursor.execute("UPDATE delivery_rules SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
+                else:
+                    # user_id列存在，更新NULL值
+                    cursor.execute("UPDATE delivery_rules SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
+
+                # 为notification_channels表添加user_id字段（如果不存在）
+                try:
+                    cursor.execute("SELECT user_id FROM notification_channels LIMIT 1")
+                except sqlite3.OperationalError:
+                    # user_id列不存在，需要添加并更新历史数据
+                    cursor.execute("ALTER TABLE notification_channels ADD COLUMN user_id INTEGER")
+                    cursor.execute("UPDATE notification_channels SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
+                else:
+                    # user_id列存在，更新NULL值
+                    cursor.execute("UPDATE notification_channels SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
+
+                # 为email_verifications表添加type字段（如果不存在）
+                try:
+                    cursor.execute("SELECT type FROM email_verifications LIMIT 1")
+                except sqlite3.OperationalError:
+                    # type列不存在，需要添加并更新历史数据
+                    cursor.execute("ALTER TABLE email_verifications ADD COLUMN type TEXT DEFAULT 'register'")
+                    cursor.execute("UPDATE email_verifications SET type = 'register' WHERE type IS NULL")
+                else:
+                    # type列存在，更新NULL值
+                    cursor.execute("UPDATE email_verifications SET type = 'register' WHERE type IS NULL")
 
             self.conn.commit()
             logger.info(f"数据库初始化成功: {self.db_path}")
@@ -345,7 +405,15 @@ class DBManager:
                     (cookie_id, cookie_value, user_id)
                 )
                 self.conn.commit()
-                logger.debug(f"Cookie保存成功: {cookie_id} (用户ID: {user_id})")
+                logger.info(f"Cookie保存成功: {cookie_id} (用户ID: {user_id})")
+
+                # 验证保存结果
+                cursor.execute("SELECT user_id FROM cookies WHERE id = ?", (cookie_id,))
+                saved_user_id = cursor.fetchone()
+                if saved_user_id:
+                    logger.info(f"Cookie保存验证: {cookie_id} 实际绑定到用户ID: {saved_user_id[0]}")
+                else:
+                    logger.error(f"Cookie保存验证失败: {cookie_id} 未找到记录")
                 return True
             except Exception as e:
                 logger.error(f"Cookie保存失败: {e}")
@@ -713,15 +781,15 @@ class DBManager:
                 return False
 
     # -------------------- 通知渠道操作 --------------------
-    def create_notification_channel(self, name: str, channel_type: str, config: str) -> int:
+    def create_notification_channel(self, name: str, channel_type: str, config: str, user_id: int = None) -> int:
         """创建通知渠道"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
                 cursor.execute('''
-                INSERT INTO notification_channels (name, type, config)
-                VALUES (?, ?, ?)
-                ''', (name, channel_type, config))
+                INSERT INTO notification_channels (name, type, config, user_id)
+                VALUES (?, ?, ?, ?)
+                ''', (name, channel_type, config, user_id))
                 self.conn.commit()
                 channel_id = cursor.lastrowid
                 logger.debug(f"创建通知渠道: {name} (ID: {channel_id})")
@@ -731,16 +799,24 @@ class DBManager:
                 self.conn.rollback()
                 raise
 
-    def get_notification_channels(self) -> List[Dict[str, any]]:
+    def get_notification_channels(self, user_id: int = None) -> List[Dict[str, any]]:
         """获取所有通知渠道"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cursor.execute('''
-                SELECT id, name, type, config, enabled, created_at, updated_at
-                FROM notification_channels
-                ORDER BY created_at DESC
-                ''')
+                if user_id is not None:
+                    cursor.execute('''
+                    SELECT id, name, type, config, enabled, created_at, updated_at
+                    FROM notification_channels
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    ''', (user_id,))
+                else:
+                    cursor.execute('''
+                    SELECT id, name, type, config, enabled, created_at, updated_at
+                    FROM notification_channels
+                    ORDER BY created_at DESC
+                    ''')
 
                 channels = []
                 for row in cursor.fetchall():
@@ -1360,7 +1436,7 @@ class DBManager:
                 logger.error(f"验证图形验证码失败: {e}")
                 return False
 
-    def save_verification_code(self, email: str, code: str, expires_minutes: int = 10) -> bool:
+    def save_verification_code(self, email: str, code: str, code_type: str = 'register', expires_minutes: int = 10) -> bool:
         """保存邮箱验证码"""
         with self.lock:
             try:
@@ -1368,19 +1444,19 @@ class DBManager:
                 expires_at = time.time() + (expires_minutes * 60)
 
                 cursor.execute('''
-                INSERT INTO email_verifications (email, code, expires_at)
-                VALUES (?, ?, ?)
-                ''', (email, code, expires_at))
+                INSERT INTO email_verifications (email, code, type, expires_at)
+                VALUES (?, ?, ?, ?)
+                ''', (email, code, code_type, expires_at))
 
                 self.conn.commit()
-                logger.info(f"保存验证码成功: {email}")
+                logger.info(f"保存验证码成功: {email} ({code_type})")
                 return True
             except Exception as e:
                 logger.error(f"保存验证码失败: {e}")
                 self.conn.rollback()
                 return False
 
-    def verify_email_code(self, email: str, code: str) -> bool:
+    def verify_email_code(self, email: str, code: str, code_type: str = 'register') -> bool:
         """验证邮箱验证码"""
         with self.lock:
             try:
@@ -1390,9 +1466,9 @@ class DBManager:
                 # 查找有效的验证码
                 cursor.execute('''
                 SELECT id FROM email_verifications
-                WHERE email = ? AND code = ? AND expires_at > ? AND used = FALSE
+                WHERE email = ? AND code = ? AND type = ? AND expires_at > ? AND used = FALSE
                 ORDER BY created_at DESC LIMIT 1
-                ''', (email, code, current_time))
+                ''', (email, code, code_type, current_time))
 
                 row = cursor.fetchone()
                 if row:
@@ -1401,10 +1477,10 @@ class DBManager:
                     UPDATE email_verifications SET used = TRUE WHERE id = ?
                     ''', (row[0],))
                     self.conn.commit()
-                    logger.info(f"验证码验证成功: {email}")
+                    logger.info(f"验证码验证成功: {email} ({code_type})")
                     return True
                 else:
-                    logger.warning(f"验证码验证失败: {email} - {code}")
+                    logger.warning(f"验证码验证失败: {email} - {code} ({code_type})")
                     return False
             except Exception as e:
                 logger.error(f"验证邮箱验证码失败: {e}")
@@ -1414,78 +1490,52 @@ class DBManager:
         """发送验证码邮件"""
         try:
             subject = "闲鱼自动回复系统 - 邮箱验证码"
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>邮箱验证码</title>
-                <style>
-                    body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }}
-                    .container {{ max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-                    .header {{ text-align: center; margin-bottom: 30px; }}
-                    .logo {{ font-size: 24px; font-weight: bold; color: #1890ff; margin-bottom: 10px; }}
-                    .title {{ font-size: 20px; color: #333; margin-bottom: 20px; }}
-                    .code-box {{ background-color: #f8f9fa; border: 2px dashed #1890ff; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px; }}
-                    .code {{ font-size: 32px; font-weight: bold; color: #1890ff; letter-spacing: 5px; }}
-                    .info {{ color: #666; line-height: 1.6; margin: 20px 0; }}
-                    .warning {{ background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; color: #856404; margin: 20px 0; }}
-                    .footer {{ text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #999; font-size: 14px; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <div class="logo">🤖 闲鱼自动回复系统</div>
-                        <div class="title">邮箱验证码</div>
-                    </div>
+            # 使用简单的纯文本邮件内容
+            text_content = f"""【闲鱼自动回复系统】邮箱验证码
 
-                    <div class="info">
-                        您好！<br><br>
-                        您正在注册闲鱼自动回复系统账号，请使用以下验证码完成邮箱验证：
-                    </div>
+您好！
 
-                    <div class="code-box">
-                        <div class="code">{code}</div>
-                    </div>
+感谢您使用闲鱼自动回复系统。为了确保账户安全，请使用以下验证码完成邮箱验证：
 
-                    <div class="warning">
-                        <strong>⚠️ 重要提醒：</strong><br>
-                        • 验证码有效期为 10 分钟<br>
-                        • 请勿将验证码告诉他人<br>
-                        • 如果您没有进行此操作，请忽略此邮件
-                    </div>
+验证码：{code}
 
-                    <div class="info">
-                        如有任何问题，请联系系统管理员。<br>
-                        感谢您使用闲鱼自动回复系统！
-                    </div>
+重要提醒：
+• 验证码有效期为 10 分钟，请及时使用
+• 请勿将验证码分享给任何人
+• 如非本人操作，请忽略此邮件
+• 系统不会主动索要您的验证码
 
-                    <div class="footer">
-                        此邮件由系统自动发送，请勿回复<br>
-                        © 2025 闲鱼自动回复系统
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
+如果您在使用过程中遇到任何问题，请联系我们的技术支持团队。
+感谢您选择闲鱼自动回复系统！
 
-            # 调用邮件发送API
+---
+此邮件由系统自动发送，请勿直接回复
+© 2025 闲鱼自动回复系统"""
+
+            # 使用GET请求发送邮件
             api_url = "https://dy.zhinianboke.com/api/emailSend"
             params = {
                 'subject': subject,
                 'receiveUser': email,
-                'sendHtml': html_content
+                'sendHtml': text_content
             }
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(api_url, params=params) as response:
-                    if response.status == 200:
-                        logger.info(f"验证码邮件发送成功: {email}")
-                        return True
-                    else:
-                        logger.error(f"验证码邮件发送失败: {email}, 状态码: {response.status}")
-                        return False
+                try:
+                    logger.info(f"发送验证码邮件: {email}")
+                    async with session.get(api_url, params=params, timeout=15) as response:
+                        response_text = await response.text()
+                        logger.info(f"邮件API响应: {response.status}")
+
+                        if response.status == 200:
+                            logger.info(f"验证码邮件发送成功: {email}")
+                            return True
+                        else:
+                            logger.error(f"验证码邮件发送失败: {email}, 状态码: {response.status}, 响应: {response_text[:200]}")
+                            return False
+                except Exception as e:
+                    logger.error(f"邮件发送异常: {email}, 错误: {e}")
+                    return False
 
         except Exception as e:
             logger.error(f"发送验证码邮件异常: {e}")
@@ -1688,15 +1738,15 @@ class DBManager:
     # ==================== 自动发货规则方法 ====================
 
     def create_delivery_rule(self, keyword: str, card_id: int, delivery_count: int = 1,
-                           enabled: bool = True, description: str = None):
+                           enabled: bool = True, description: str = None, user_id: int = None):
         """创建发货规则"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
                 cursor.execute('''
-                INSERT INTO delivery_rules (keyword, card_id, delivery_count, enabled, description)
-                VALUES (?, ?, ?, ?, ?)
-                ''', (keyword, card_id, delivery_count, enabled, description))
+                INSERT INTO delivery_rules (keyword, card_id, delivery_count, enabled, description, user_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ''', (keyword, card_id, delivery_count, enabled, description, user_id))
                 self.conn.commit()
                 rule_id = cursor.lastrowid
                 logger.info(f"创建发货规则成功: {keyword} -> 卡券ID {card_id} (规则ID: {rule_id})")
@@ -1705,19 +1755,30 @@ class DBManager:
                 logger.error(f"创建发货规则失败: {e}")
                 raise
 
-    def get_all_delivery_rules(self):
+    def get_all_delivery_rules(self, user_id: int = None):
         """获取所有发货规则"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cursor.execute('''
-                SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
-                       dr.description, dr.delivery_times, dr.created_at, dr.updated_at,
-                       c.name as card_name, c.type as card_type
-                FROM delivery_rules dr
-                LEFT JOIN cards c ON dr.card_id = c.id
-                ORDER BY dr.created_at DESC
-                ''')
+                if user_id is not None:
+                    cursor.execute('''
+                    SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
+                           dr.description, dr.delivery_times, dr.created_at, dr.updated_at,
+                           c.name as card_name, c.type as card_type
+                    FROM delivery_rules dr
+                    LEFT JOIN cards c ON dr.card_id = c.id
+                    WHERE dr.user_id = ?
+                    ORDER BY dr.created_at DESC
+                    ''', (user_id,))
+                else:
+                    cursor.execute('''
+                    SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
+                           dr.description, dr.delivery_times, dr.created_at, dr.updated_at,
+                           c.name as card_name, c.type as card_type
+                    FROM delivery_rules dr
+                    LEFT JOIN cards c ON dr.card_id = c.id
+                    ORDER BY dr.created_at DESC
+                    ''')
 
                 rules = []
                 for row in cursor.fetchall():
@@ -1750,7 +1811,7 @@ class DBManager:
                 SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
                        dr.description, dr.delivery_times,
                        c.name as card_name, c.type as card_type, c.api_config,
-                       c.text_content, c.data_content, c.enabled as card_enabled
+                       c.text_content, c.data_content, c.enabled as card_enabled, c.description as card_description
                 FROM delivery_rules dr
                 LEFT JOIN cards c ON dr.card_id = c.id
                 WHERE dr.enabled = 1 AND c.enabled = 1
@@ -1788,7 +1849,8 @@ class DBManager:
                         'card_api_config': api_config,
                         'card_text_content': row[10],
                         'card_data_content': row[11],
-                        'card_enabled': bool(row[12])
+                        'card_enabled': bool(row[12]),
+                        'card_description': row[13]  # 卡券备注信息
                     })
 
                 return rules

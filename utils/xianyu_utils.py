@@ -297,26 +297,47 @@ class MessagePackDecoder:
 
 def decrypt(data: str) -> str:
     """解密消息数据"""
+    import json as json_module  # 使用别名避免作用域冲突
+
     try:
+        # 确保输入数据是字符串类型
+        if not isinstance(data, str):
+            data = str(data)
+
+        # 清理数据，移除可能的非ASCII字符
+        try:
+            # 尝试编码为ASCII，如果失败则使用UTF-8编码后再解码
+            data.encode('ascii')
+        except UnicodeEncodeError:
+            # 如果包含非ASCII字符，先编码为UTF-8字节，再解码为ASCII兼容的字符串
+            data = data.encode('utf-8', errors='ignore').decode('ascii', errors='ignore')
+
         # Base64解码
-        decoded_data = base64.b64decode(data)
-        
+        try:
+            decoded_data = base64.b64decode(data)
+        except Exception as decode_error:
+            # 如果base64解码失败，尝试添加填充
+            missing_padding = len(data) % 4
+            if missing_padding:
+                data += '=' * (4 - missing_padding)
+            decoded_data = base64.b64decode(data)
+
         # 使用MessagePack解码器解码数据
         decoder = MessagePackDecoder(decoded_data)
         decoded_value = decoder.decode()
-        
+
         # 如果解码后的值是字典，转换为JSON字符串
         if isinstance(decoded_value, dict):
             def json_serializer(obj):
                 if isinstance(obj, bytes):
                     return obj.decode('utf-8', errors='ignore')
                 raise TypeError(f"Type {type(obj)} not serializable")
-            
-            return json.dumps(decoded_value, default=json_serializer)
-        
+
+            return json_module.dumps(decoded_value, default=json_serializer, ensure_ascii=False)
+
         # 如果是其他类型，尝试转换为字符串
         return str(decoded_value)
-        
+
     except Exception as e:
         raise Exception(f"解密失败: {str(e)}")
 

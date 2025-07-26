@@ -43,11 +43,15 @@
       z-index: 1000;
       transition: all 0.3s ease;
       box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
 
     .sidebar-header {
       padding: 1.5rem 1rem;
       border-bottom: 1px solid rgba(255,255,255,0.1);
+      flex-shrink: 0;
     }
 
     .sidebar-brand {
@@ -61,6 +65,35 @@
 
     .sidebar-nav {
       padding: 1rem 0;
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    /* 侧边栏滚动条样式 */
+    .sidebar-nav::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .sidebar-nav::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    .sidebar-nav::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 3px;
+      transition: background 0.3s ease;
+    }
+
+    .sidebar-nav::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    /* Firefox滚动条样式 */
+    .sidebar-nav {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.3) rgba(255, 255, 255, 0.1);
     }
 
     .nav-item {
@@ -1133,12 +1166,6 @@
         </a>
       </div>
       <div class="nav-item">
-        <a href="#" class="nav-link" onclick="showSection('logs')">
-          <i class="bi bi-file-text"></i>
-          日志管理
-        </a>
-      </div>
-      <div class="nav-item">
         <a href="#" class="nav-link" onclick="showSection('system-settings')">
           <i class="bi bi-gear"></i>
           系统设置
@@ -1176,7 +1203,12 @@
           关于
         </a>
       </div>
-      <div class="nav-item mt-auto" style="position: absolute; bottom: 2rem; width: 100%;">
+
+      <!-- 底部分隔符 -->
+      <div class="nav-divider mt-3 mb-2">
+        <small class="text-white-50">系统操作</small>
+      </div>
+      <div class="nav-item">
         <a href="#" class="nav-link" onclick="logout()">
           <i class="bi bi-box-arrow-right"></i>
           登出
@@ -1893,12 +1925,13 @@
           </div>
         </div>
 
-        <!-- 备份管理 -->
-        <div class="row mt-4">
+        <!-- 备份管理 (仅管理员可见) -->
+        <div id="backup-management" class="row mt-4" style="display: none;">
           <div class="col-12">
             <div class="card">
               <div class="card-header">
                 <i class="bi bi-archive me-2"></i>备份管理
+                <span class="badge bg-warning ms-2">管理员专用</span>
               </div>
               <div class="card-body">
                 <div class="row">
@@ -2177,8 +2210,12 @@
             </div>
 
             <div class="mb-3">
-              <label class="form-label">备注</label>
-              <textarea class="form-control" id="cardDescription" rows="2" placeholder="可选的备注信息..."></textarea>
+              <label class="form-label">备注信息</label>
+              <textarea class="form-control" id="cardDescription" rows="3" placeholder="可选的备注信息，支持变量替换：&#10;{DELIVERY_CONTENT} - 发货内容&#10;例如：您的卡券信息：{DELIVERY_CONTENT}，请妥善保管。"></textarea>
+              <small class="form-text text-muted">
+                <i class="bi bi-info-circle me-1"></i>
+                备注内容会与发货内容一起发送。使用 <code>{DELIVERY_CONTENT}</code> 变量可以在备注中插入实际的发货内容。
+              </small>
             </div>
           </form>
         </div>
@@ -3804,11 +3841,17 @@
           return false;
         }
 
-        // 检查是否为管理员，显示管理员菜单
+        // 检查是否为管理员，显示管理员菜单和功能
         if (result.username === 'admin') {
           const adminMenuSection = document.getElementById('adminMenuSection');
           if (adminMenuSection) {
             adminMenuSection.style.display = 'block';
+          }
+
+          // 显示备份管理功能
+          const backupManagement = document.getElementById('backup-management');
+          if (backupManagement) {
+            backupManagement.style.display = 'block';
           }
         }
 
@@ -5646,10 +5689,10 @@
       orange: '#f59e0b'
     };
 
-    // 加载系统设置
-    async function loadSystemSettings() {
+    // 加载用户设置
+    async function loadUserSettings() {
       try {
-        const response = await fetch(`${apiBase}/system-settings`, {
+        const response = await fetch(`${apiBase}/user-settings`, {
           headers: {
             'Authorization': `Bearer ${authToken}`
           }
@@ -5659,13 +5702,13 @@
           const settings = await response.json();
 
           // 设置主题颜色
-          if (settings.theme_color) {
-            document.getElementById('themeColor').value = settings.theme_color;
-            applyThemeColor(settings.theme_color);
+          if (settings.theme_color && settings.theme_color.value) {
+            document.getElementById('themeColor').value = settings.theme_color.value;
+            applyThemeColor(settings.theme_color.value);
           }
         }
       } catch (error) {
-        console.error('加载系统设置失败:', error);
+        console.error('加载用户设置失败:', error);
       }
     }
 
@@ -5707,14 +5750,13 @@
           const selectedColor = document.getElementById('themeColor').value;
 
           try {
-            const response = await fetch(`${apiBase}/system-settings/theme_color`, {
+            const response = await fetch(`${apiBase}/user-settings/theme_color`, {
               method: 'PUT',
               headers: {
                 'Authorization': `Bearer ${authToken}`,
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
-                key: 'theme_color',
                 value: selectedColor,
                 description: '主题颜色'
               })
@@ -5786,8 +5828,8 @@
         });
       }
 
-      // 页面加载时加载系统设置
-      loadSystemSettings();
+      // 页面加载时加载用户设置
+      loadUserSettings();
     });
 
     // ==================== 备份管理功能 ====================

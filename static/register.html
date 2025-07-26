@@ -331,7 +331,7 @@
         function refreshCaptcha() {
             sessionId = generateSessionId(); // 生成新的session ID
             loadCaptcha();
-            document.getElementById('captchaCode').value = ''; // 清空输入
+            // 不再自动清空验证码输入框，让用户自己决定是否清空
         }
 
         async function verifyCaptcha() {

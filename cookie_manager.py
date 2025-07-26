@@ -62,12 +62,12 @@ class CookieManager:
         except Exception as e:
             logger.error(f"XianyuLive 任务异常({cookie_id}): {e}")
 
-    async def _add_cookie_async(self, cookie_id: str, cookie_value: str):
+    async def _add_cookie_async(self, cookie_id: str, cookie_value: str, user_id: int = None):
         if cookie_id in self.tasks:
             raise ValueError("Cookie ID already exists")
         self.cookies[cookie_id] = cookie_value
-        # 保存到数据库
-        db_manager.save_cookie(cookie_id, cookie_value)
+        # 保存到数据库，如果没有指定user_id，则保持原有绑定关系
+        db_manager.save_cookie(cookie_id, cookie_value, user_id)
         task = self.loop.create_task(self._run_xianyu(cookie_id, cookie_value))
         self.tasks[cookie_id] = task
         logger.info(f"已启动账号任务: {cookie_id}")
@@ -83,7 +83,7 @@ class CookieManager:
         logger.info(f"已移除账号: {cookie_id}")
 
     # ------------------------ 对外线程安全接口 ------------------------
-    def add_cookie(self, cookie_id: str, cookie_value: str, kw_list: Optional[List[Tuple[str, str]]] = None):
+    def add_cookie(self, cookie_id: str, cookie_value: str, kw_list: Optional[List[Tuple[str, str]]] = None, user_id: int = None):
         """线程安全新增 Cookie 并启动任务"""
         if kw_list is not None:
             self.keywords[cookie_id] = kw_list
@@ -96,9 +96,9 @@ class CookieManager:
 
         if current_loop and current_loop == self.loop:
             # 同一事件循环中，直接调度
-            return self.loop.create_task(self._add_cookie_async(cookie_id, cookie_value))
+            return self.loop.create_task(self._add_cookie_async(cookie_id, cookie_value, user_id))
         else:
-            fut = asyncio.run_coroutine_threadsafe(self._add_cookie_async(cookie_id, cookie_value), self.loop)
+            fut = asyncio.run_coroutine_threadsafe(self._add_cookie_async(cookie_id, cookie_value, user_id), self.loop)
             return fut.result()
 
     def remove_cookie(self, cookie_id: str):

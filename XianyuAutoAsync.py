@@ -86,6 +86,10 @@ class XianyuLive:
         # 通知防重复机制
         self.last_notification_time = {}  # 记录每种通知类型的最后发送时间
         self.notification_cooldown = 300  # 5分钟内不重复发送相同类型的通知
+
+        # 自动发货防重复机制
+        self.last_delivery_time = {}  # 记录每个商品的最后发货时间
+        self.delivery_cooldown = 60  # 1分钟内不重复发货
         
         # 人工接管功能已禁用，永远走自动模式
         # self.manual_mode_conversations = set()  # 存储处于人工接管模式的会话ID
@@ -93,6 +97,22 @@ class XianyuLive:
         # self.manual_mode_timestamps = {}  # 记录进入人工模式的时间
         # self.toggle_keywords = MANUAL_MODE.get('toggle_keywords', ['。'])  # 切换关键词
         self.session = None  # 用于API调用的aiohttp session
+
+    def can_auto_delivery(self, item_id: str) -> bool:
+        """检查是否可以进行自动发货（防重复发货）"""
+        current_time = time.time()
+        last_delivery = self.last_delivery_time.get(item_id, 0)
+
+        if current_time - last_delivery < self.delivery_cooldown:
+            logger.info(f"【{self.cookie_id}】商品 {item_id} 在冷却期内，跳过自动发货")
+            return False
+
+        return True
+
+    def mark_delivery_sent(self, item_id: str):
+        """标记商品已发货"""
+        self.last_delivery_time[item_id] = time.time()
+        logger.debug(f"【{self.cookie_id}】标记商品 {item_id} 已发货")
 
     # 人工接管功能已禁用，以下方法不再使用
     # def check_toggle_keywords(self, message):
@@ -1147,10 +1167,13 @@ class XianyuLive:
                 delivery_content = db_manager.consume_batch_data(rule['card_id'])
 
             if delivery_content:
+                # 处理备注信息和变量替换
+                final_content = self._process_delivery_content_with_description(delivery_content, rule.get('card_description', ''))
+
                 # 增加发货次数统计
                 db_manager.increment_delivery_times(rule['id'])
-                logger.info(f"自动发货成功: 规则ID={rule['id']}, 内容长度={len(delivery_content)}")
-                return delivery_content
+                logger.info(f"自动发货成功: 规则ID={rule['id']}, 内容长度={len(final_content)}")
+                return final_content
             else:
                 logger.warning(f"获取发货内容失败: 规则ID={rule['id']}")
                 return None
@@ -1158,6 +1181,28 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"自动发货失败: {self._safe_str(e)}")
             return None
+
+    def _process_delivery_content_with_description(self, delivery_content: str, card_description: str) -> str:
+        """处理发货内容和备注信息，实现变量替换"""
+        try:
+            # 如果没有备注信息，直接返回发货内容
+            if not card_description or not card_description.strip():
+                return delivery_content
+
+            # 替换备注中的变量
+            processed_description = card_description.replace('{DELIVERY_CONTENT}', delivery_content)
+
+            # 如果备注中包含变量替换，返回处理后的备注
+            if '{DELIVERY_CONTENT}' in card_description:
+                return processed_description
+            else:
+                # 如果备注中没有变量，将备注和发货内容组合
+                return f"{processed_description}\n\n{delivery_content}"
+
+        except Exception as e:
+            logger.error(f"处理备注信息失败: {e}")
+            # 出错时返回原始发货内容
+            return delivery_content
 
     async def _get_api_card_content(self, rule, retry_count=0):
         """调用API获取卡券内容，支持重试机制"""
@@ -1855,8 +1900,27 @@ class XianyuLive:
             elif send_message == '[你关闭了订单，钱款已原路退返]':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】系统消息不处理')
                 return
+            elif send_message == '发来一条消息':
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】系统通知消息不处理')
+                return
+            elif send_message == '发来一条新消息':
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】系统通知消息不处理')
+                return
+            elif send_message == '[买家确认收货，交易成功]':
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】交易完成消息不处理')
+                return
+            elif send_message == '快给ta一个评价吧~' or send_message == '快给ta一个评价吧～':
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】评价提醒消息不处理')
+                return
+            elif send_message == '[你已发货]':
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】发货确认消息不处理')
+                return
             elif send_message == '[我已付款，等待你发货]':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】买家已付款，准备自动发货')
+
+                # 检查是否可以进行自动发货（防重复）
+                if not self.can_auto_delivery(item_id):
+                    return
 
                 # 构造用户URL
                 user_url = f'https://www.goofish.com/personal?userId={send_user_id}'
@@ -1872,6 +1936,9 @@ class XianyuLive:
                     delivery_content = await self._auto_delivery(item_id, item_title)
 
                     if delivery_content:
+                        # 标记已发货（防重复）
+                        self.mark_delivery_sent(item_id)
+
                         # 发送发货内容给买家
                         await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
                         logger.info(f'[{msg_time}] 【自动发货】已向 {user_url} 发送发货内容')
@@ -1890,6 +1957,10 @@ class XianyuLive:
             elif send_message == '[已付款，待发货]':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】买家已付款，准备自动发货')
 
+                # 检查是否可以进行自动发货（防重复）
+                if not self.can_auto_delivery(item_id):
+                    return
+
                 # 构造用户URL
                 user_url = f'https://www.goofish.com/personal?userId={send_user_id}'
 
@@ -1904,6 +1975,9 @@ class XianyuLive:
                     delivery_content = await self._auto_delivery(item_id, item_title)
 
                     if delivery_content:
+                        # 标记已发货（防重复）
+                        self.mark_delivery_sent(item_id)
+
                         # 发送发货内容给买家
                         await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
                         logger.info(f'[{msg_time}] 【自动发货】已向 {user_url} 发送发货内容')
@@ -1919,6 +1993,76 @@ class XianyuLive:
                     await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, f"自动发货处理异常: {str(e)}")
 
                 return
+            elif send_message == '[卡片消息]':
+                # 检查是否为"我已小刀，待刀成"的卡片消息
+                try:
+                    # 从消息中提取卡片内容
+                    card_title = None
+                    if isinstance(message, dict) and "1" in message and isinstance(message["1"], dict):
+                        message_1 = message["1"]
+                        if "6" in message_1 and isinstance(message_1["6"], dict):
+                            message_6 = message_1["6"]
+                            if "3" in message_6 and isinstance(message_6["3"], dict):
+                                message_6_3 = message_6["3"]
+                                if "5" in message_6_3:
+                                    # 解析JSON内容
+                                    try:
+                                        card_content = json.loads(message_6_3["5"])
+                                        if "dxCard" in card_content and "item" in card_content["dxCard"]:
+                                            card_item = card_content["dxCard"]["item"]
+                                            if "main" in card_item and "exContent" in card_item["main"]:
+                                                ex_content = card_item["main"]["exContent"]
+                                                card_title = ex_content.get("title", "")
+                                    except (json.JSONDecodeError, KeyError) as e:
+                                        logger.debug(f"解析卡片消息失败: {e}")
+
+                    # 检查是否为"我已小刀，待刀成"
+                    if card_title == "我已小刀，待刀成":
+                        logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】检测到"我已小刀，待刀成"，准备自动发货')
+
+                        # 检查是否可以进行自动发货（防重复）
+                        if not self.can_auto_delivery(item_id):
+                            return
+
+                        # 构造用户URL
+                        user_url = f'https://www.goofish.com/personal?userId={send_user_id}'
+
+                        # 自动发货逻辑
+                        try:
+                            # 设置默认标题（将通过API获取真实商品信息）
+                            item_title = "待获取商品信息"
+
+                            logger.info(f"【{self.cookie_id}】准备自动发货: item_id={item_id}, item_title={item_title}")
+
+                            # 调用自动发货方法
+                            delivery_content = await self._auto_delivery(item_id, item_title)
+
+                            if delivery_content:
+                                # 标记已发货（防重复）
+                                self.mark_delivery_sent(item_id)
+
+                                # 发送发货内容给买家
+                                await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
+                                logger.info(f'[{msg_time}] 【自动发货】已向 {user_url} 发送发货内容')
+                                await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "发货成功")
+                            else:
+                                logger.warning(f'[{msg_time}] 【自动发货】未找到匹配的发货规则或获取发货内容失败')
+                                # 发送自动发货失败通知
+                                await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "未找到匹配的发货规则或获取发货内容失败")
+
+                        except Exception as e:
+                            logger.error(f"自动发货处理异常: {self._safe_str(e)}")
+                            # 发送自动发货异常通知
+                            await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, f"自动发货处理异常: {str(e)}")
+
+                        return
+                    else:
+                        logger.info(f'[{msg_time}] 【{self.cookie_id}】收到卡片消息，标题: {card_title or "未知"}')
+
+                except Exception as e:
+                    logger.error(f"处理卡片消息异常: {self._safe_str(e)}")
+
+                # 如果不是目标卡片消息，继续正常处理流程
             # 记录回复来源
             reply_source = 'API'  # 默认假设是API回复
 

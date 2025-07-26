@@ -123,22 +123,94 @@
     </div>
     
     <div class="login-body">
+      <!-- 登录方式选择 -->
+      <div class="login-tabs mb-4">
+        <div class="btn-group w-100" role="group">
+          <input type="radio" class="btn-check" name="loginType" id="usernameLogin" value="username" checked>
+          <label class="btn btn-outline-primary" for="usernameLogin">用户名/密码</label>
+
+          <input type="radio" class="btn-check" name="loginType" id="emailPasswordLogin" value="email-password">
+          <label class="btn btn-outline-primary" for="emailPasswordLogin">邮箱/密码</label>
+
+          <input type="radio" class="btn-check" name="loginType" id="emailCodeLogin" value="email-code">
+          <label class="btn btn-outline-primary" for="emailCodeLogin">邮箱/验证码</label>
+        </div>
+      </div>
+
       <form id="loginForm">
-        <div class="input-group">
-          <i class="bi bi-person-fill"></i>
-          <input type="text" class="form-control" id="username" placeholder="请输入用户名" required>
+        <!-- 用户名/密码登录 -->
+        <div id="usernameLoginForm" class="login-form-section">
+          <div class="input-group">
+            <i class="bi bi-person-fill"></i>
+            <input type="text" class="form-control" id="username" placeholder="请输入用户名">
+          </div>
+
+          <div class="input-group">
+            <i class="bi bi-lock-fill"></i>
+            <input type="password" class="form-control" id="password" placeholder="请输入密码">
+          </div>
         </div>
 
-        <div class="input-group">
-          <i class="bi bi-lock-fill"></i>
-          <input type="password" class="form-control" id="password" placeholder="请输入密码" required>
+        <!-- 邮箱/密码登录 -->
+        <div id="emailPasswordLoginForm" class="login-form-section" style="display: none;">
+          <div class="input-group">
+            <i class="bi bi-envelope-fill"></i>
+            <input type="email" class="form-control" id="emailForPassword" placeholder="请输入邮箱地址">
+          </div>
+
+          <div class="input-group">
+            <i class="bi bi-lock-fill"></i>
+            <input type="password" class="form-control" id="emailPassword" placeholder="请输入密码">
+          </div>
         </div>
-        
+
+        <!-- 邮箱/验证码登录 -->
+        <div id="emailCodeLoginForm" class="login-form-section" style="display: none;">
+          <div class="input-group">
+            <i class="bi bi-envelope-fill"></i>
+            <input type="email" class="form-control" id="emailForCode" placeholder="请输入邮箱地址">
+          </div>
+
+          <!-- 图形验证码 -->
+          <div class="mb-3">
+            <label class="form-label">图形验证码</label>
+            <div class="row g-2">
+              <div class="col-7">
+                <input type="text" class="form-control" id="captchaCode" placeholder="输入4位验证码" maxlength="4">
+              </div>
+              <div class="col-5">
+                <div class="captcha-container" style="position: relative;">
+                  <img id="captchaImage" src="" alt="图形验证码"
+                       style="width: 100%; height: 38px; border: 1px solid #ddd; border-radius: 5px; cursor: pointer;"
+                       onclick="refreshCaptcha()">
+                  <div id="captchaLoading" class="text-center" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">
+                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="form-text">
+              <span id="captchaStatus">请输入图形验证码，点击图片可刷新</span>
+            </div>
+          </div>
+
+          <!-- 邮箱验证码 -->
+          <div class="input-group">
+            <input type="text" class="form-control" id="verificationCode" placeholder="输入6位验证码" maxlength="6">
+            <button type="button" class="btn btn-outline-secondary" id="sendCodeBtn" onclick="sendVerificationCode()" disabled>
+              发送验证码
+            </button>
+          </div>
+          <div class="form-text mb-3">
+            <span id="codeStatus">请先验证图形验证码</span>
+          </div>
+        </div>
+
         <div id="errorAlert" class="alert alert-danger d-none" role="alert">
           <i class="bi bi-exclamation-triangle-fill me-2"></i>
           <span id="errorMessage"></span>
         </div>
-        
+
         <button type="submit" class="btn btn-primary btn-login">
           <span class="loading spinner-border spinner-border-sm me-2" role="status"></span>
           <span id="loginText">登录</span>
@@ -234,21 +306,73 @@
       e.preventDefault();
       hideError();
       setLoading(true);
-      
-      const username = document.getElementById('username').value;
-      const password = document.getElementById('password').value;
-      
+
+      const loginType = document.querySelector('input[name="loginType"]:checked').value;
+      let loginData = {};
+
       try {
+        if (loginType === 'username') {
+          const username = document.getElementById('username').value;
+          const password = document.getElementById('password').value;
+
+          if (!username || !password) {
+            showError('请输入用户名和密码');
+            return;
+          }
+
+          loginData = { username, password };
+        } else if (loginType === 'email-password') {
+          const email = document.getElementById('emailForPassword').value;
+          const password = document.getElementById('emailPassword').value;
+
+          if (!email || !password) {
+            showError('请输入邮箱和密码');
+            return;
+          }
+
+          if (!validateEmail(email)) {
+            showError('请输入有效的邮箱地址');
+            return;
+          }
+
+          loginData = { email, password };
+        } else if (loginType === 'email-code') {
+          const email = document.getElementById('emailForCode').value;
+          const verificationCode = document.getElementById('verificationCode').value;
+
+          if (!captchaVerified) {
+            showError('请先验证图形验证码');
+            return;
+          }
+
+          if (!email) {
+            showError('请输入邮箱地址');
+            return;
+          }
+
+          if (!validateEmail(email)) {
+            showError('请输入有效的邮箱地址');
+            return;
+          }
+
+          if (!verificationCode || verificationCode.length !== 6) {
+            showError('请输入6位验证码');
+            return;
+          }
+
+          loginData = { email, verification_code: verificationCode };
+        }
+
         const response = await fetch('/login', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify(loginData)
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
           // 保存token到localStorage
           localStorage.setItem('auth_token', result.token);
@@ -284,6 +408,249 @@
         localStorage.removeItem('auth_token');
       });
     }
+
+    // 登录方式切换相关变量
+    let captchaVerified = false;
+    let countdownTimer = null;
+    let countdownSeconds = 0;
+    let sessionId = generateSessionId();
+
+    // 生成会话ID
+    function generateSessionId() {
+      return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+    }
+
+    // 登录方式切换
+    function switchLoginType() {
+      const loginType = document.querySelector('input[name="loginType"]:checked').value;
+
+      // 隐藏所有表单
+      document.querySelectorAll('.login-form-section').forEach(section => {
+        section.style.display = 'none';
+      });
+
+      // 显示对应表单
+      if (loginType === 'username') {
+        document.getElementById('usernameLoginForm').style.display = 'block';
+      } else if (loginType === 'email-password') {
+        document.getElementById('emailPasswordLoginForm').style.display = 'block';
+      } else if (loginType === 'email-code') {
+        document.getElementById('emailCodeLoginForm').style.display = 'block';
+        // 每次切换到邮箱验证码登录时都加载验证码
+        loadCaptcha();
+      }
+
+      hideError();
+    }
+
+    // 加载图形验证码
+    async function loadCaptcha() {
+      const captchaImage = document.getElementById('captchaImage');
+      const captchaLoading = document.getElementById('captchaLoading');
+      const captchaStatus = document.getElementById('captchaStatus');
+
+      captchaLoading.style.display = 'block';
+      captchaImage.style.display = 'none';
+
+      try {
+        const response = await fetch('/generate-captcha', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          captchaImage.src = result.captcha_image;
+          captchaStatus.textContent = '请输入图形验证码，点击图片可刷新';
+          captchaVerified = false;
+          updateSendCodeButton();
+        } else {
+          captchaStatus.textContent = '图形验证码加载失败，请刷新页面重试';
+        }
+      } catch (error) {
+        console.error('加载图形验证码失败:', error);
+        captchaStatus.textContent = '图形验证码加载失败，请检查网络连接';
+      } finally {
+        captchaLoading.style.display = 'none';
+        captchaImage.style.display = 'block';
+      }
+    }
+
+    // 刷新图形验证码
+    function refreshCaptcha() {
+      loadCaptcha();
+    }
+
+    // 验证图形验证码
+    async function verifyCaptcha() {
+      const captchaCode = document.getElementById('captchaCode').value.trim();
+      const captchaStatus = document.getElementById('captchaStatus');
+
+      if (!captchaCode) {
+        captchaStatus.textContent = '请输入图形验证码';
+        captchaVerified = false;
+        updateSendCodeButton();
+        return;
+      }
+
+      try {
+        const response = await fetch('/verify-captcha', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            captcha_code: captchaCode
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          captchaStatus.innerHTML = '<span style="color: green;">✓ 图形验证码验证成功</span>';
+          captchaVerified = true;
+        } else {
+          captchaStatus.innerHTML = '<span style="color: red;">✗ 图形验证码错误，请重新输入</span>';
+          captchaVerified = false;
+          refreshCaptcha(); // 自动刷新验证码
+        }
+
+        updateSendCodeButton();
+
+      } catch (error) {
+        console.error('验证图形验证码失败:', error);
+        captchaStatus.innerHTML = '<span style="color: red;">验证失败，请检查网络连接</span>';
+        captchaVerified = false;
+        updateSendCodeButton();
+      }
+    }
+
+    // 更新发送验证码按钮状态
+    function updateSendCodeButton() {
+      const sendCodeBtn = document.getElementById('sendCodeBtn');
+      const email = document.getElementById('emailForCode').value.trim();
+      const codeStatus = document.getElementById('codeStatus');
+
+      if (captchaVerified && email && validateEmail(email)) {
+        sendCodeBtn.disabled = false;
+        codeStatus.textContent = '图形验证码已验证，可以发送邮箱验证码';
+      } else {
+        sendCodeBtn.disabled = true;
+        if (!captchaVerified) {
+          codeStatus.textContent = '请先验证图形验证码';
+        } else if (!email) {
+          codeStatus.textContent = '请先输入邮箱地址';
+        } else if (!validateEmail(email)) {
+          codeStatus.textContent = '请输入有效的邮箱地址';
+        }
+      }
+    }
+
+    // 邮箱格式验证
+    function validateEmail(email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return emailRegex.test(email);
+    }
+
+    // 开始倒计时
+    function startCountdown() {
+      countdownSeconds = 60;
+      const sendCodeBtn = document.getElementById('sendCodeBtn');
+      const codeStatus = document.getElementById('codeStatus');
+
+      sendCodeBtn.disabled = true;
+
+      countdownTimer = setInterval(() => {
+        countdownSeconds--;
+        sendCodeBtn.textContent = `重新发送 (${countdownSeconds}s)`;
+        codeStatus.innerHTML = `<span class="countdown">验证码已发送，${countdownSeconds}秒后可重新发送</span>`;
+
+        if (countdownSeconds <= 0) {
+          clearInterval(countdownTimer);
+          sendCodeBtn.disabled = false;
+          sendCodeBtn.textContent = '发送验证码';
+          codeStatus.textContent = '可以重新发送验证码';
+        }
+      }, 1000);
+    }
+
+    // 发送邮箱验证码
+    async function sendVerificationCode() {
+      const email = document.getElementById('emailForCode').value.trim();
+
+      if (!captchaVerified) {
+        showError('请先验证图形验证码');
+        return;
+      }
+
+      if (!email) {
+        showError('请先输入邮箱地址');
+        return;
+      }
+
+      if (!validateEmail(email)) {
+        showError('请输入有效的邮箱地址');
+        return;
+      }
+
+      try {
+        const response = await fetch('/send-verification-code', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email: email,
+            type: 'login',
+            session_id: sessionId
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          startCountdown();
+        } else {
+          showError(result.message);
+        }
+      } catch (error) {
+        console.error('发送验证码失败:', error);
+        showError('发送验证码失败，请检查网络连接');
+      }
+    }
+
+    // 事件监听器
+    document.addEventListener('DOMContentLoaded', function() {
+      // 登录方式切换
+      document.querySelectorAll('input[name="loginType"]').forEach(radio => {
+        radio.addEventListener('change', switchLoginType);
+      });
+
+      // 图形验证码输入框事件
+      const captchaCodeInput = document.getElementById('captchaCode');
+      if (captchaCodeInput) {
+        captchaCodeInput.addEventListener('input', function() {
+          if (this.value.length === 4) {
+            verifyCaptcha();
+          } else {
+            captchaVerified = false;
+            updateSendCodeButton();
+            document.getElementById('captchaStatus').textContent = '请输入4位图形验证码';
+          }
+        });
+      }
+
+      // 邮箱输入框事件
+      const emailForCodeInput = document.getElementById('emailForCode');
+      if (emailForCodeInput) {
+        emailForCodeInput.addEventListener('input', updateSendCodeButton);
+      }
+    });
   </script>
 </body>
 </html>
