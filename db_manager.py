@@ -494,6 +494,25 @@ class DBManager:
             except Exception as e:
                 logger.error(f"根据ID获取Cookie失败: {e}")
                 return None
+
+    def get_cookie_details(self, cookie_id: str) -> Optional[Dict[str, any]]:
+        """获取Cookie的详细信息，包括user_id"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT id, value, user_id, created_at FROM cookies WHERE id = ?", (cookie_id,))
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        'id': result[0],
+                        'value': result[1],
+                        'user_id': result[2],
+                        'created_at': result[3]
+                    }
+                return None
+            except Exception as e:
+                logger.error(f"获取Cookie详细信息失败: {e}")
+                return None
     
     # -------------------- 关键字操作 --------------------
     def save_keywords(self, cookie_id: str, keywords: List[Tuple[str, str]]) -> bool:

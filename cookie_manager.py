@@ -51,11 +51,11 @@ class CookieManager:
         return True
 
     # ------------------------ 内部协程 ------------------------
-    async def _run_xianyu(self, cookie_id: str, cookie_value: str):
+    async def _run_xianyu(self, cookie_id: str, cookie_value: str, user_id: int = None):
         """在事件循环中启动 XianyuLive.main"""
         from XianyuAutoAsync import XianyuLive  # 延迟导入，避免循环
         try:
-            live = XianyuLive(cookie_value, cookie_id=cookie_id)
+            live = XianyuLive(cookie_value, cookie_id=cookie_id, user_id=user_id)
             await live.main()
         except asyncio.CancelledError:
             logger.info(f"XianyuLive 任务已取消: {cookie_id}")
@@ -68,9 +68,18 @@ class CookieManager:
         self.cookies[cookie_id] = cookie_value
         # 保存到数据库，如果没有指定user_id，则保持原有绑定关系
         db_manager.save_cookie(cookie_id, cookie_value, user_id)
-        task = self.loop.create_task(self._run_xianyu(cookie_id, cookie_value))
+
+        # 获取实际保存的user_id（如果没有指定，数据库会返回实际的user_id）
+        actual_user_id = user_id
+        if actual_user_id is None:
+            # 从数据库获取Cookie对应的user_id
+            cookie_info = db_manager.get_cookie_details(cookie_id)
+            if cookie_info:
+                actual_user_id = cookie_info.get('user_id')
+
+        task = self.loop.create_task(self._run_xianyu(cookie_id, cookie_value, actual_user_id))
         self.tasks[cookie_id] = task
-        logger.info(f"已启动账号任务: {cookie_id}")
+        logger.info(f"已启动账号任务: {cookie_id} (用户ID: {actual_user_id})")
 
     async def _remove_cookie_async(self, cookie_id: str):
         task = self.tasks.pop(cookie_id, None)
@@ -117,11 +126,17 @@ class CookieManager:
     def update_cookie(self, cookie_id: str, new_value: str):
         """替换指定账号的 Cookie 并重启任务"""
         async def _update():
+            # 获取原有的user_id
+            original_user_id = None
+            cookie_info = db_manager.get_cookie_details(cookie_id)
+            if cookie_info:
+                original_user_id = cookie_info.get('user_id')
+
             # 先移除
             if cookie_id in self.tasks:
                 await self._remove_cookie_async(cookie_id)
-            # 再添加
-            await self._add_cookie_async(cookie_id, new_value)
+            # 再添加，保持原有的user_id
+            await self._add_cookie_async(cookie_id, new_value, original_user_id)
 
         try:
             current_loop = asyncio.get_running_loop()

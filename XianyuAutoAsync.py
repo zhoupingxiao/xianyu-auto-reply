@@ -53,16 +53,17 @@ class XianyuLive:
             except:
                 return "未知错误"
 
-    def __init__(self, cookies_str=None, cookie_id: str = "default"):
+    def __init__(self, cookies_str=None, cookie_id: str = "default", user_id: int = None):
         """初始化闲鱼直播类"""
         if not cookies_str:
             cookies_str = COOKIES_STR
         if not cookies_str:
             raise ValueError("未提供cookies，请在global_config.yml中配置COOKIES_STR或通过参数传入")
-            
+
         self.cookies = trans_cookies(cookies_str)
         self.cookie_id = cookie_id  # 唯一账号标识
         self.cookies_str = cookies_str  # 保存原始cookie字符串
+        self.user_id = user_id  # 保存用户ID，用于token刷新时保持正确的所有者关系
         self.base_url = WEBSOCKET_URL
         self.myid = self.cookies['unb']
         self.device_id = generate_device_id(self.myid)
@@ -239,7 +240,12 @@ class XianyuLive:
             # 更新数据库中的Cookie
             if hasattr(self, 'cookie_id') and self.cookie_id:
                 try:
-                    db_manager.save_cookie(self.cookie_id, self.cookies_str)
+                    # 获取当前Cookie的用户ID，避免在刷新时改变所有者
+                    current_user_id = None
+                    if hasattr(self, 'user_id') and self.user_id:
+                        current_user_id = self.user_id
+
+                    db_manager.save_cookie(self.cookie_id, self.cookies_str, current_user_id)
                     logger.debug(f"已更新Cookie到数据库: {self.cookie_id}")
                 except Exception as e:
                     logger.error(f"更新数据库Cookie失败: {self._safe_str(e)}")
