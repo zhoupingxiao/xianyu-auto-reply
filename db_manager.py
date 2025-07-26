@@ -298,18 +298,24 @@ class DBManager:
             )
             ''')
 
-            # 插入默认系统设置
+            # 插入默认系统设置（不包括管理员密码，由reply_server.py初始化）
             cursor.execute('''
             INSERT OR IGNORE INTO system_settings (key, value, description) VALUES
-            ('admin_password_hash', ?, '管理员密码哈希'),
             ('theme_color', 'blue', '主题颜色')
-            ''', (hashlib.sha256("admin123".encode()).hexdigest(),))
+            ''')
 
-            # 创建默认admin用户
-            cursor.execute('''
-            INSERT OR IGNORE INTO users (username, email, password_hash) VALUES
-            ('admin', 'admin@localhost', ?)
-            ''', (hashlib.sha256("admin123".encode()).hexdigest(),))
+            # 创建默认admin用户（只在首次初始化时创建）
+            cursor.execute('SELECT COUNT(*) FROM users WHERE username = ?', ('admin',))
+            admin_exists = cursor.fetchone()[0] > 0
+
+            if not admin_exists:
+                # 首次创建admin用户，设置默认密码
+                default_password_hash = hashlib.sha256("admin123".encode()).hexdigest()
+                cursor.execute('''
+                INSERT INTO users (username, email, password_hash) VALUES
+                ('admin', 'admin@localhost', ?)
+                ''', (default_password_hash,))
+                logger.info("创建默认admin用户，密码: admin123")
 
             # 获取admin用户ID，用于历史数据绑定
             cursor.execute("SELECT id FROM users WHERE username = 'admin'")
@@ -1214,19 +1220,7 @@ class DBManager:
                 logger.error(f"获取所有系统设置失败: {e}")
                 return {}
 
-    def verify_admin_password(self, password: str) -> bool:
-        """验证管理员密码"""
-        stored_hash = self.get_system_setting('admin_password_hash')
-        if not stored_hash:
-            return False
-
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        return password_hash == stored_hash
-
-    def update_admin_password(self, new_password: str) -> bool:
-        """更新管理员密码"""
-        password_hash = hashlib.sha256(new_password.encode()).hexdigest()
-        return self.set_system_setting('admin_password_hash', password_hash, '管理员密码哈希')
+    # 管理员密码现在统一使用用户表管理，不再需要单独的方法
 
     # ==================== 用户管理方法 ====================
 
@@ -1314,6 +1308,31 @@ class DBManager:
 
         password_hash = hashlib.sha256(password.encode()).hexdigest()
         return user['password_hash'] == password_hash and user['is_active']
+
+    def update_user_password(self, username: str, new_password: str) -> bool:
+        """更新用户密码"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+
+                cursor.execute('''
+                UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE username = ?
+                ''', (password_hash, username))
+
+                if cursor.rowcount > 0:
+                    self.conn.commit()
+                    logger.info(f"用户 {username} 密码更新成功")
+                    return True
+                else:
+                    logger.warning(f"用户 {username} 不存在，密码更新失败")
+                    return False
+
+            except Exception as e:
+                logger.error(f"更新用户密码失败: {e}")
+                self.conn.rollback()
+                return False
 
     def generate_verification_code(self) -> str:
         """生成6位数字验证码"""

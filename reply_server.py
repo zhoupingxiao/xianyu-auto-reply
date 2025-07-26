@@ -17,18 +17,21 @@ import cookie_manager
 from db_manager import db_manager
 from file_log_collector import setup_file_logging, get_file_log_collector
 from ai_reply_engine import ai_reply_engine
+from loguru import logger
 
 # 关键字文件路径
 KEYWORDS_FILE = Path(__file__).parent / "回复关键字.txt"
 
 # 简单的用户认证配置
 ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD_HASH = hashlib.sha256("admin123".encode()).hexdigest()  # 默认密码: admin123
+DEFAULT_ADMIN_PASSWORD = "admin123"  # 系统初始化时的默认密码
 SESSION_TOKENS = {}  # 存储会话token: {token: {'user_id': int, 'username': str, 'timestamp': float}}
 TOKEN_EXPIRE_TIME = 24 * 60 * 60  # token过期时间：24小时
 
 # HTTP Bearer认证
 security = HTTPBearer(auto_error=False)
+
+# 不再需要单独的密码初始化，由数据库初始化时处理
 
 
 def load_keywords() -> List[Tuple[str, str]]:
@@ -77,6 +80,11 @@ class LoginResponse(BaseModel):
     token: Optional[str] = None
     message: str
     user_id: Optional[int] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class RegisterRequest(BaseModel):
@@ -145,6 +153,19 @@ def verify_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(s
         return None
 
     return token_data
+
+
+def verify_admin_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Dict[str, Any]:
+    """验证管理员token"""
+    user_info = verify_token(credentials)
+    if not user_info:
+        raise HTTPException(status_code=401, detail="未授权访问")
+
+    # 检查是否是管理员
+    if user_info['username'] != ADMIN_USERNAME:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+
+    return user_info
 
 
 def require_auth(user_info: Optional[Dict[str, Any]] = Depends(verify_token)):
@@ -422,33 +443,7 @@ async def login(request: LoginRequest):
         # 用户名/密码登录
         logger.info(f"【{request.username}】尝试用户名登录")
 
-        # 首先检查是否是admin用户（向后兼容）
-        if request.username == ADMIN_USERNAME and db_manager.verify_admin_password(request.password):
-            # 获取admin用户信息
-            admin_user = db_manager.get_user_by_username('admin')
-            if admin_user:
-                user_id = admin_user['id']
-            else:
-                user_id = 1  # 默认admin用户ID
-
-            # 生成token
-            token = generate_token()
-            SESSION_TOKENS[token] = {
-                'user_id': user_id,
-                'username': 'admin',
-                'timestamp': time.time()
-            }
-
-            logger.info(f"【admin#{user_id}】登录成功（管理员）")
-
-            return LoginResponse(
-                success=True,
-                token=token,
-                message="登录成功",
-                user_id=user_id
-            )
-
-        # 检查普通用户
+        # 统一使用用户表验证（包括admin用户）
         if db_manager.verify_user_password(request.username, request.password):
             user = db_manager.get_user_by_username(request.username)
             if user:
@@ -460,7 +455,11 @@ async def login(request: LoginRequest):
                     'timestamp': time.time()
                 }
 
-                logger.info(f"【{user['username']}#{user['id']}】登录成功")
+                # 区分管理员和普通用户的日志
+                if user['username'] == ADMIN_USERNAME:
+                    logger.info(f"【{user['username']}#{user['id']}】登录成功（管理员）")
+                else:
+                    logger.info(f"【{user['username']}#{user['id']}】登录成功")
 
                 return LoginResponse(
                     success=True,
@@ -567,6 +566,30 @@ async def logout(credentials: Optional[HTTPAuthorizationCredentials] = Depends(s
     if credentials and credentials.credentials in SESSION_TOKENS:
         del SESSION_TOKENS[credentials.credentials]
     return {"message": "已登出"}
+
+
+# 修改管理员密码接口
+@app.post('/change-admin-password')
+async def change_admin_password(request: ChangePasswordRequest, admin_user: Dict[str, Any] = Depends(verify_admin_token)):
+    from db_manager import db_manager
+
+    try:
+        # 验证当前密码（使用用户表验证）
+        if not db_manager.verify_user_password('admin', request.current_password):
+            return {"success": False, "message": "当前密码错误"}
+
+        # 更新密码（使用用户表更新）
+        success = db_manager.update_user_password('admin', request.new_password)
+
+        if success:
+            logger.info(f"【admin#{admin_user['user_id']}】管理员密码修改成功")
+            return {"success": True, "message": "密码修改成功"}
+        else:
+            return {"success": False, "message": "密码修改失败"}
+
+    except Exception as e:
+        logger.error(f"修改管理员密码异常: {e}")
+        return {"success": False, "message": "系统错误"}
 
 
 # 生成图形验证码接口
@@ -829,9 +852,7 @@ class SystemSettingIn(BaseModel):
     description: Optional[str] = None
 
 
-class PasswordUpdateIn(BaseModel):
-    current_password: str
-    new_password: str
+
 
 
 @app.get("/cookies")
@@ -1228,25 +1249,7 @@ def get_system_settings(_: None = Depends(require_auth)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put('/system-settings/password')
-def update_admin_password(password_data: PasswordUpdateIn, _: None = Depends(require_auth)):
-    """更新管理员密码"""
-    from db_manager import db_manager
-    try:
-        # 验证当前密码
-        if not db_manager.verify_admin_password(password_data.current_password):
-            raise HTTPException(status_code=400, detail='当前密码错误')
 
-        # 更新密码
-        success = db_manager.update_admin_password(password_data.new_password)
-        if success:
-            return {'msg': 'password updated'}
-        else:
-            raise HTTPException(status_code=400, detail='密码更新失败')
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put('/system-settings/{key}')

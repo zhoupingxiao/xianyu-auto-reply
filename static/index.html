@@ -5797,8 +5797,8 @@
           }
 
           try {
-            const response = await fetch(`${apiBase}/system-settings/password`, {
-              method: 'PUT',
+            const response = await fetch(`${apiBase}/change-admin-password`, {
+              method: 'POST',
               headers: {
                 'Authorization': `Bearer ${authToken}`,
                 'Content-Type': 'application/json'
@@ -5810,13 +5810,18 @@
             });
 
             if (response.ok) {
-              showToast('密码更新成功，请重新登录', 'success');
-              passwordForm.reset();
-              // 3秒后跳转到登录页面
-              setTimeout(() => {
-                localStorage.removeItem('auth_token');
-                window.location.href = '/login.html';
-              }, 3000);
+              const result = await response.json();
+              if (result.success) {
+                showToast('密码更新成功，请重新登录', 'success');
+                passwordForm.reset();
+                // 3秒后跳转到登录页面
+                setTimeout(() => {
+                  localStorage.removeItem('auth_token');
+                  window.location.href = '/login.html';
+                }, 3000);
+              } else {
+                showToast(`密码更新失败: ${result.message}`, 'danger');
+              }
             } else {
               const error = await response.text();
               showToast(`密码更新失败: ${error}`, 'danger');

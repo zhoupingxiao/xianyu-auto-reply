@@ -195,31 +195,30 @@ xianyu-auto-reply/
 
 ## ⚙️ 配置说明
 
-### 环境变量配置
-系统支持通过环境变量或 `.env` 文件进行配置：
 
-```bash
-# 基础配置
-WEB_PORT=8080
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=admin123
-JWT_SECRET_KEY=your-secret-key
+### 管理员密码配置
 
-# 多用户系统
-MULTIUSER_ENABLED=true
-USER_REGISTRATION_ENABLED=true
-EMAIL_VERIFICATION_ENABLED=true
-CAPTCHA_ENABLED=true
+**重要**：为了系统安全，强烈建议修改默认管理员密码！
 
-# AI回复配置
-AI_REPLY_ENABLED=false
-DEFAULT_AI_MODEL=qwen-plus
-DEFAULT_AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+#### 默认密码
+- **用户名**：`admin`
+- **默认密码**：`admin123`
+- **初始化机制**：首次创建数据库时自动创建admin用户
 
-# 自动发货配置
-AUTO_DELIVERY_ENABLED=true
-AUTO_DELIVERY_TIMEOUT=30
-```
+#### 修改密码方式
+
+**方式一：Web界面修改（推荐）**
+1. 使用默认密码登录系统
+2. 进入系统设置页面
+3. 在"修改密码"区域输入当前密码和新密码
+4. 点击"修改密码"按钮完成修改
+
+
+**密码管理机制**：
+- 数据库初始化时创建admin用户，密码为 `admin123`
+- 重启时如果用户表已存在，不重新初始化
+- 所有用户（包括admin）统一使用用户表验证
+- 密码修改后立即生效，无需重启
 
 ### 全局配置文件
 `global_config.yml` 包含详细的系统配置，支持：
