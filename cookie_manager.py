@@ -126,17 +126,39 @@ class CookieManager:
     def update_cookie(self, cookie_id: str, new_value: str):
         """替换指定账号的 Cookie 并重启任务"""
         async def _update():
-            # 获取原有的user_id
+            # 获取原有的user_id和关键词
             original_user_id = None
+            original_keywords = []
+            original_status = True
+
             cookie_info = db_manager.get_cookie_details(cookie_id)
             if cookie_info:
                 original_user_id = cookie_info.get('user_id')
 
-            # 先移除
-            if cookie_id in self.tasks:
-                await self._remove_cookie_async(cookie_id)
-            # 再添加，保持原有的user_id
-            await self._add_cookie_async(cookie_id, new_value, original_user_id)
+            # 保存原有的关键词和状态
+            if cookie_id in self.keywords:
+                original_keywords = self.keywords[cookie_id].copy()
+            if cookie_id in self.cookie_status:
+                original_status = self.cookie_status[cookie_id]
+
+            # 先移除任务（但不删除数据库记录）
+            task = self.tasks.pop(cookie_id, None)
+            if task:
+                task.cancel()
+
+            # 更新Cookie值（保持原有user_id，不删除关键词）
+            self.cookies[cookie_id] = new_value
+            db_manager.save_cookie(cookie_id, new_value, original_user_id)
+
+            # 恢复关键词和状态
+            self.keywords[cookie_id] = original_keywords
+            self.cookie_status[cookie_id] = original_status
+
+            # 重新启动任务
+            task = self.loop.create_task(self._run_xianyu(cookie_id, new_value, original_user_id))
+            self.tasks[cookie_id] = task
+
+            logger.info(f"已更新Cookie并重启任务: {cookie_id} (用户ID: {original_user_id}, 关键词: {len(original_keywords)}条)")
 
         try:
             current_loop = asyncio.get_running_loop()
