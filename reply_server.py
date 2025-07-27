@@ -2271,11 +2271,13 @@ def download_database_backup(admin_user: Dict[str, Any] = Depends(require_admin)
     try:
         log_with_user('info', "请求下载数据库备份", admin_user)
 
-        db_file_path = 'xianyu_data.db'
+        # 使用db_manager的实际数据库路径
+        from db_manager import db_manager
+        db_file_path = db_manager.db_path
 
         # 检查数据库文件是否存在
         if not os.path.exists(db_file_path):
-            log_with_user('error', "数据库文件不存在", admin_user)
+            log_with_user('error', f"数据库文件不存在: {db_file_path}", admin_user)
             raise HTTPException(status_code=404, detail="数据库文件不存在")
 
         # 生成带时间戳的文件名
@@ -2352,25 +2354,29 @@ async def upload_database_backup(admin_user: Dict[str, Any] = Depends(require_ad
             raise HTTPException(status_code=400, detail="无效的数据库文件")
 
         # 备份当前数据库
-        current_db_path = 'xianyu_data.db'
-        backup_current_path = f"xianyu_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        from db_manager import db_manager
+        current_db_path = db_manager.db_path
+
+        # 生成备份文件路径（与原数据库在同一目录）
+        db_dir = os.path.dirname(current_db_path)
+        backup_filename = f"xianyu_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        backup_current_path = os.path.join(db_dir, backup_filename)
 
         if os.path.exists(current_db_path):
             shutil.copy2(current_db_path, backup_current_path)
             log_with_user('info', f"当前数据库已备份为: {backup_current_path}", admin_user)
 
         # 关闭当前数据库连接
-        from db_manager import db_manager
         if hasattr(db_manager, 'conn') and db_manager.conn:
             db_manager.conn.close()
             log_with_user('info', "已关闭当前数据库连接", admin_user)
 
         # 替换数据库文件
         shutil.move(temp_file_path, current_db_path)
-        log_with_user('info', "数据库文件已替换", admin_user)
+        log_with_user('info', f"数据库文件已替换: {current_db_path}", admin_user)
 
-        # 重新初始化数据库连接
-        db_manager.__init__()
+        # 重新初始化数据库连接（使用原有的db_path）
+        db_manager.__init__(db_manager.db_path)
         log_with_user('info', "数据库连接已重新初始化", admin_user)
 
         # 验证新数据库

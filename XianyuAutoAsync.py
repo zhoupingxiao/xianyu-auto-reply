@@ -989,18 +989,26 @@ class XianyuLive:
             logger.error(f"处理Token刷新通知失败: {self._safe_str(e)}")
 
     def _is_normal_token_expiry(self, error_message: str) -> bool:
-        """检查是否是正常的令牌过期（这种情况不需要发送通知）"""
-        # 正常的令牌过期关键词
-        normal_expiry_keywords = [
+        """检查是否是正常的令牌过期或其他不需要通知的情况"""
+        # 不需要发送通知的关键词
+        no_notification_keywords = [
+            # 正常的令牌过期
             'FAIL_SYS_TOKEN_EXOIRED::令牌过期',
             'FAIL_SYS_TOKEN_EXPIRED::令牌过期',
             'FAIL_SYS_TOKEN_EXOIRED',
             'FAIL_SYS_TOKEN_EXPIRED',
-            '令牌过期'
+            '令牌过期',
+            # Session过期（正常情况）
+            'FAIL_SYS_SESSION_EXPIRED::Session过期',
+            'FAIL_SYS_SESSION_EXPIRED',
+            'Session过期',
+            # Token定时刷新失败（会自动重试）
+            'Token定时刷新失败，将自动重试',
+            'Token定时刷新失败'
         ]
 
-        # 检查错误消息是否包含正常的令牌过期关键词
-        for keyword in normal_expiry_keywords:
+        # 检查错误消息是否包含不需要通知的关键词
+        for keyword in no_notification_keywords:
             if keyword in error_message:
                 return True
 

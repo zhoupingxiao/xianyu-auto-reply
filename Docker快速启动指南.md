@@ -107,6 +107,27 @@ docker-compose exec xianyu-app bash
 docker-compose exec xianyu-app ls -la /app/data/
 ```
 
+### SQL日志调试
+```bash
+# SQL日志默认已启用（INFO级别）
+# 查看SQL执行日志
+docker-compose logs -f xianyu-app | grep "SQL"
+
+# 如需禁用SQL日志
+export SQL_LOG_ENABLED=false
+docker-compose up -d
+
+# 如需调整日志级别
+export SQL_LOG_LEVEL=DEBUG  # 更详细的日志
+# 或
+export SQL_LOG_LEVEL=WARNING  # 更少的日志
+docker-compose up -d
+
+# 在.env文件中配置
+echo "SQL_LOG_ENABLED=false" >> .env
+echo "SQL_LOG_LEVEL=DEBUG" >> .env
+```
+
 ### 故障排除
 ```bash
 # 重新构建镜像

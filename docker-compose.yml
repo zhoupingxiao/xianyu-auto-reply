@@ -27,6 +27,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEBUG=${DEBUG:-false}
       - RELOAD=${RELOAD:-false}
+      # SQL日志配置（默认启用，可通过环境变量覆盖）
+      - SQL_LOG_ENABLED=${SQL_LOG_ENABLED:-true}
+      - SQL_LOG_LEVEL=${SQL_LOG_LEVEL:-INFO}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-default-secret-key}
