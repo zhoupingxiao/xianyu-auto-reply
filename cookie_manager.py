@@ -190,10 +190,20 @@ class CookieManager:
         if cookie_id not in self.cookies:
             raise ValueError(f"Cookie ID {cookie_id} 不存在")
 
+        old_status = self.cookie_status.get(cookie_id, True)
         self.cookie_status[cookie_id] = enabled
         # 保存到数据库
         db_manager.save_cookie_status(cookie_id, enabled)
         logger.info(f"更新Cookie状态: {cookie_id} -> {'启用' if enabled else '禁用'}")
+
+        # 如果状态发生变化，需要启动或停止任务
+        if old_status != enabled:
+            if enabled:
+                # 启用账号：启动任务
+                self._start_cookie_task(cookie_id)
+            else:
+                # 禁用账号：停止任务
+                self._stop_cookie_task(cookie_id)
 
     def get_cookie_status(self, cookie_id: str) -> bool:
         """获取Cookie的启用状态"""
@@ -203,6 +213,55 @@ class CookieManager:
         """获取所有启用的Cookie"""
         return {cid: value for cid, value in self.cookies.items()
                 if self.cookie_status.get(cid, True)}
+
+    def _start_cookie_task(self, cookie_id: str):
+        """启动指定Cookie的任务"""
+        if cookie_id in self.tasks:
+            logger.warning(f"Cookie任务已存在，跳过启动: {cookie_id}")
+            return
+
+        cookie_value = self.cookies.get(cookie_id)
+        if not cookie_value:
+            logger.error(f"Cookie值不存在，无法启动任务: {cookie_id}")
+            return
+
+        try:
+            # 获取Cookie对应的user_id
+            cookie_info = db_manager.get_cookie_details(cookie_id)
+            user_id = cookie_info.get('user_id') if cookie_info else None
+
+            # 使用异步方式启动任务
+            if hasattr(self.loop, 'is_running') and self.loop.is_running():
+                # 事件循环正在运行，使用run_coroutine_threadsafe
+                fut = asyncio.run_coroutine_threadsafe(
+                    self._add_cookie_async(cookie_id, cookie_value, user_id),
+                    self.loop
+                )
+                fut.result(timeout=5)  # 等待最多5秒
+            else:
+                # 事件循环未运行，直接创建任务
+                task = self.loop.create_task(self._run_xianyu(cookie_id, cookie_value, user_id))
+                self.tasks[cookie_id] = task
+
+            logger.info(f"成功启动Cookie任务: {cookie_id}")
+        except Exception as e:
+            logger.error(f"启动Cookie任务失败: {cookie_id}, {e}")
+
+    def _stop_cookie_task(self, cookie_id: str):
+        """停止指定Cookie的任务"""
+        if cookie_id not in self.tasks:
+            logger.warning(f"Cookie任务不存在，跳过停止: {cookie_id}")
+            return
+
+        try:
+            task = self.tasks[cookie_id]
+            if not task.done():
+                task.cancel()
+                logger.info(f"已取消Cookie任务: {cookie_id}")
+            del self.tasks[cookie_id]
+            logger.info(f"成功停止Cookie任务: {cookie_id}")
+        except Exception as e:
+            logger.error(f"停止Cookie任务失败: {cookie_id}, {e}")
 
 
 # 在 Start.py 中会把此变量赋值为具体实例

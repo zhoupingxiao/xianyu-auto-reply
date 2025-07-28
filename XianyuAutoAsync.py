@@ -1322,6 +1322,12 @@ class XianyuLive:
         """Token刷新循环"""
         while True:
             try:
+                # 检查账号是否启用
+                from cookie_manager import manager as cookie_manager
+                if cookie_manager and not cookie_manager.get_cookie_status(self.cookie_id):
+                    logger.info(f"【{self.cookie_id}】账号已禁用，停止Token刷新循环")
+                    break
+
                 current_time = time.time()
                 if current_time - self.last_token_refresh_time >= self.token_refresh_interval:
                     logger.info("Token即将过期，准备刷新...")
@@ -1480,6 +1486,12 @@ class XianyuLive:
         """心跳循环"""
         while True:
             try:
+                # 检查账号是否启用
+                from cookie_manager import manager as cookie_manager
+                if cookie_manager and not cookie_manager.get_cookie_status(self.cookie_id):
+                    logger.info(f"【{self.cookie_id}】账号已禁用，停止心跳循环")
+                    break
+
                 await self.send_heartbeat(ws)
                 await asyncio.sleep(self.heartbeat_interval)
             except Exception as e:
@@ -1673,6 +1685,12 @@ class XianyuLive:
     async def handle_message(self, message_data, websocket):
         """处理所有类型的消息"""
         try:
+            # 检查账号是否启用
+            from cookie_manager import manager as cookie_manager
+            if cookie_manager and not cookie_manager.get_cookie_status(self.cookie_id):
+                logger.debug(f"【{self.cookie_id}】账号已禁用，跳过消息处理")
+                return
+
             # 发送确认消息
             try:
                 message = message_data
@@ -2122,9 +2140,15 @@ class XianyuLive:
             await self.create_session()  # 创建session
             while True:
                 try:
+                    # 检查账号是否启用
+                    from cookie_manager import manager as cookie_manager
+                    if cookie_manager and not cookie_manager.get_cookie_status(self.cookie_id):
+                        logger.info(f"【{self.cookie_id}】账号已禁用，停止主循环")
+                        break
+
                     headers = WEBSOCKET_HEADERS.copy()
                     headers['Cookie'] = self.cookies_str
-                    
+
                     # 兼容不同版本的websockets库
                     async with await self._create_websocket_connection(headers) as websocket:
                         self.ws = websocket
@@ -2139,14 +2163,14 @@ class XianyuLive:
                         async for message in websocket:
                             try:
                                 message_data = json.loads(message)
-                                
+
                                 # 处理心跳响应
                                 if await self.handle_heartbeat_response(message_data):
                                     continue
-                                    
+
                                 # 处理其他消息
                                 await self.handle_message(message_data, websocket)
-                                
+
                             except Exception as e:
                                 logger.error(f"处理消息出错: {self._safe_str(e)}")
                                 continue

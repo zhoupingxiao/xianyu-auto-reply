@@ -85,8 +85,13 @@ async def main():
     print("CookieManager 创建完成")
 
     # 1) 从数据库加载的 Cookie 已经在 CookieManager 初始化时完成
-    # 为每个 Cookie 启动任务
+    # 为每个启用的 Cookie 启动任务
     for cid, val in manager.cookies.items():
+        # 检查账号是否启用
+        if not manager.get_cookie_status(cid):
+            logger.info(f"跳过禁用的 Cookie: {cid}")
+            continue
+
         try:
             await manager._add_cookie_async(cid, val)
             logger.info(f"启动数据库中的 Cookie 任务: {cid}")
