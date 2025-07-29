@@ -332,7 +332,26 @@ curl http://localhost:8080/health
 ## 📞 技术支持
 
 ### 🔧 故障排除
-如遇问题，请：
+
+#### 常见问题解决
+
+**1. 商品搜索功能报错（Playwright浏览器问题）**
+```bash
+# 错误信息：Executable doesn't exist at /root/.cache/ms-playwright/chromium...
+
+# 解决方案：重新构建镜像（推荐）
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+
+# 或者手动修复（临时方案）
+docker exec -it xianyu-auto-reply bash
+playwright install chromium
+exit
+docker restart xianyu-auto-reply
+```
+
+**2. 其他问题排查**
 1. 查看日志：`docker-compose logs -f`
 2. 检查状态：`./docker-deploy.sh status`
 3. 健康检查：`curl http://localhost:8080/health`

@@ -14,7 +14,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV TZ=Asia/Shanghai
 
-# 安装系统依赖
+# 安装系统依赖（包括Playwright浏览器依赖）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         nodejs \
@@ -25,6 +25,51 @@ RUN apt-get update && \
         libpng-dev \
         libfreetype6-dev \
         fonts-dejavu-core \
+        # Playwright浏览器依赖
+        libnss3 \
+        libnspr4 \
+        libatk-bridge2.0-0 \
+        libdrm2 \
+        libxkbcommon0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxrandr2 \
+        libgbm1 \
+        libxss1 \
+        libasound2 \
+        libatspi2.0-0 \
+        libgtk-3-0 \
+        libgdk-pixbuf2.0-0 \
+        libxcursor1 \
+        libxi6 \
+        libxrender1 \
+        libxext6 \
+        libx11-6 \
+        libxft2 \
+        libxinerama1 \
+        libxrandr2 \
+        libxss1 \
+        libxtst6 \
+        ca-certificates \
+        fonts-liberation \
+        libappindicator3-1 \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libdrm2 \
+        libgtk-3-0 \
+        libnspr4 \
+        libnss3 \
+        libx11-xcb1 \
+        libxcomposite1 \
+        libxcursor1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxi6 \
+        libxrandr2 \
+        libxrender1 \
+        libxss1 \
+        libxtst6 \
+        xdg-utils \
         && apt-get clean \
         && rm -rf /var/lib/apt/lists/*
 
@@ -38,6 +83,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # 复制项目文件
 COPY . .
+
+# 安装Playwright浏览器（必须在复制项目文件之后）
+RUN playwright install chromium && \
+    playwright install-deps chromium
 
 # 创建必要的目录并设置权限
 RUN mkdir -p /app/logs /app/data /app/backups && \

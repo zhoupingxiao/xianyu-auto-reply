@@ -88,14 +88,14 @@ start_services() {
     else
         print_info "启动基础服务..."
     fi
-    
+
     docker-compose $profile up -d
     print_success "服务启动完成"
-    
+
     # 等待服务就绪
     print_info "等待服务就绪..."
     sleep 10
-    
+
     # 检查服务状态
     if docker-compose ps | grep -q "Up"; then
         print_success "服务运行正常"
@@ -327,6 +327,9 @@ main() {
             ;;
         "cleanup")
             cleanup
+            ;;
+        "fix-playwright")
+            fix_playwright
             ;;
         "help"|"--help"|"-h")
             show_help

@@ -188,12 +188,20 @@ class XianyuSearcher:
                 await self.close_browser()
 
         except Exception as e:
-            logger.error(f"Playwright 搜索失败: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"Playwright 搜索失败: {error_msg}")
+
+            # 检查是否是浏览器安装问题
+            if "Executable doesn't exist" in error_msg or "playwright install" in error_msg:
+                error_msg = "浏览器未安装。请在Docker容器中运行: playwright install chromium"
+            elif "BrowserType.launch" in error_msg:
+                error_msg = "浏览器启动失败。请确保Docker容器有足够的权限和资源"
+
             # 如果 Playwright 失败，返回错误信息
             return {
                 'items': [],
                 'total': 0,
-                'error': f'搜索失败: {str(e)}'
+                'error': f'搜索失败: {error_msg}'
             }
 
     async def _get_fallback_data(self, keyword: str, page: int, page_size: int) -> Dict[str, Any]:
@@ -599,12 +607,20 @@ class XianyuSearcher:
                 await self.close_browser()
 
         except Exception as e:
-            logger.error(f"Playwright 多页搜索失败: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"Playwright 多页搜索失败: {error_msg}")
+
+            # 检查是否是浏览器安装问题
+            if "Executable doesn't exist" in error_msg or "playwright install" in error_msg:
+                error_msg = "浏览器未安装。请在Docker容器中运行: playwright install chromium"
+            elif "BrowserType.launch" in error_msg:
+                error_msg = "浏览器启动失败。请确保Docker容器有足够的权限和资源"
+
             # 如果 Playwright 失败，返回错误信息
             return {
                 'items': [],
                 'total': 0,
-                'error': f'多页搜索失败: {str(e)}'
+                'error': f'多页搜索失败: {error_msg}'
             }
 
     async def _get_multiple_fallback_data(self, keyword: str, total_pages: int) -> Dict[str, Any]:
