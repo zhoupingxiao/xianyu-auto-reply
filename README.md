@@ -37,7 +37,14 @@
 - **批量管理** - 支持批量查看、编辑商品信息
 - **智能去重** - 自动去重，避免重复存储
 
-### 📊 系统监控
+### � 商品搜索功能
+- **真实数据获取** - 基于Playwright技术获取真实闲鱼商品数据
+- **智能排序** - 按"人想要"数量自动倒序排列
+- **多页搜索** - 支持一次性获取多页商品数据
+- **前端分页** - 灵活的前端分页显示
+- **商品详情** - 支持查看完整商品详情信息
+
+### �📊 系统监控
 - **实时日志** - 完整的操作日志记录和查看
 - **性能监控** - 系统资源使用情况监控
 - **健康检查** - 服务状态健康检查
@@ -87,10 +94,13 @@ cd xianyu-auto-reply
 # 2. 安装依赖
 pip install -r requirements.txt
 
-# 3. 启动系统
+# 3. 安装Playwright浏览器（商品搜索功能需要）
+playwright install chromium
+
+# 4. 启动系统
 python Start.py
 
-# 4. 访问系统
+# 5. 访问系统
 # http://localhost:8080
 ```
 
@@ -143,6 +153,13 @@ docker rm -f xianyu-auto-reply
 - 支持文本内容和卡密文件两种发货方式
 - 系统检测到付款消息时自动发货
 
+### 5. 使用商品搜索功能
+- 访问商品搜索页面（需要登录）
+- 输入搜索关键词和查询页数
+- 系统自动获取真实闲鱼商品数据
+- 商品按"人想要"数量自动排序
+- 支持查看商品详情和跳转到闲鱼页面
+
 ## 🏗️ 系统架构
 
 ```
@@ -183,11 +200,20 @@ xianyu-auto-reply/
 ├── requirements.txt           # Python依赖
 ├── docker-compose.yml         # Docker编排配置
 ├── Dockerfile                 # Docker镜像构建
+├── utils/                     # 工具模块
+│   ├── item_search.py        # 商品搜索功能
+│   └── ...                   # 其他工具模块
 ├── static/                    # 前端静态文件
 │   ├── index.html            # 主界面
 │   ├── login.html            # 登录页面
 │   ├── register.html         # 注册页面
-│   └── ...                   # 其他页面和资源
+│   ├── item_search.html      # 商品搜索页面
+│   ├── user_management.html  # 用户管理页面
+│   ├── data_management.html  # 数据管理页面
+│   ├── log_management.html   # 日志管理页面
+│   └── lib/                  # 本地静态资源库
+│       ├── bootstrap/        # Bootstrap框架
+│       └── bootstrap-icons/  # Bootstrap图标
 ├── logs/                      # 日志文件目录
 ├── data/                      # 数据库文件目录
 └── backups/                   # 备份文件目录

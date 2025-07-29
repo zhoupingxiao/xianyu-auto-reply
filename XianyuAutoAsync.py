@@ -174,8 +174,7 @@ class XianyuLive:
             
             # 获取token
             token = None
-            if '_m_h5_tk' in self.cookies:
-                token = self.cookies['_m_h5_tk'].split('_')[0]
+            token = trans_cookies(self.cookies_str).get('_m_h5_tk', '').split('_')[0] if trans_cookies(self.cookies_str).get('_m_h5_tk') else ''
             
             sign = generate_sign(params['t'], token, data_val)
             params['sign'] = sign

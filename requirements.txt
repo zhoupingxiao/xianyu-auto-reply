@@ -34,3 +34,17 @@ python-dotenv>=1.0.1
 
 # 图像处理（图形验证码）
 Pillow>=10.0.0
+
+# 浏览器自动化（商品搜索功能）
+playwright>=1.40.0
+
+# 加密和安全
+PyJWT>=2.8.0
+passlib>=1.7.4
+bcrypt>=4.0.1
+
+# 时间处理
+python-dateutil>=2.8.2
+
+# 正则表达式增强
+regex>=2023.10.3

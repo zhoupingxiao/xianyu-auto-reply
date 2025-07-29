@@ -376,8 +376,18 @@
         if (result.success) {
           // 保存token到localStorage
           localStorage.setItem('auth_token', result.token);
-          // 跳转到管理页面
-          window.location.href = '/admin';
+
+          // 检查是否有重定向URL
+          const redirectUrl = localStorage.getItem('redirectAfterLogin');
+          if (redirectUrl) {
+            // 清除重定向URL
+            localStorage.removeItem('redirectAfterLogin');
+            // 跳转到原来的页面
+            window.location.href = redirectUrl;
+          } else {
+            // 默认跳转到管理页面
+            window.location.href = '/admin';
+          }
         } else {
           showError(result.message);
         }
