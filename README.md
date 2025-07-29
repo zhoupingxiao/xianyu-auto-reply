@@ -361,10 +361,10 @@ docker restart xianyu-auto-reply
 欢迎加入我们的技术交流群，获取实时帮助和最新更新：
 
 #### 微信交流群
-<img src="wechat-group.png" alt="微信群二维码" width="200">
+<img src="static/wechat-group.png" alt="微信群二维码" width="200">
 
 #### QQ交流群
-<img src="qq-group.png" alt="QQ群二维码" width="200">
+<img src="static/qq-group.png" alt="QQ群二维码" width="200">
 
 ### 📧 联系方式
 - **技术支持**：遇到问题可在群内咨询
