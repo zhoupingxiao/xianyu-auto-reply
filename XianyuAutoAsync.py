@@ -530,7 +530,7 @@ class XianyuLive:
 
     async def get_item_info(self, item_id, retry_count=0):
         """获取商品信息，自动处理token失效的情况"""
-        if retry_count >= 3:  # 最多重试3次
+        if retry_count >= 4:  # 最多重试3次
             logger.error("获取商品信息失败，重试次数过多")
             return {"error": "获取商品信息失败，重试次数过多"}
 
@@ -596,6 +596,23 @@ class XianyuLive:
             ) as response:
                 res_json = await response.json()
 
+                # 检查并更新Cookie
+                if 'set-cookie' in response.headers:
+                    new_cookies = {}
+                    for cookie in response.headers.getall('set-cookie', []):
+                        if '=' in cookie:
+                            name, value = cookie.split(';')[0].split('=', 1)
+                            new_cookies[name.strip()] = value.strip()
+                    
+                    # 更新cookies
+                    if new_cookies:
+                        self.cookies.update(new_cookies)
+                        # 生成新的cookie字符串
+                        self.cookies_str = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
+                        # 更新数据库中的Cookie
+                        await self.update_config_cookies()
+                        logger.debug("已更新Cookie到数据库")
+
                 logger.debug(f"商品信息获取成功: {res_json}")
                 # 检查返回状态
                 if isinstance(res_json, dict):
@@ -603,10 +620,7 @@ class XianyuLive:
                     # 检查ret是否包含成功信息
                     if not any('SUCCESS::调用成功' in ret for ret in ret_value):
                         logger.warning(f"商品信息API调用失败，错误信息: {ret_value}")
-                        # 处理响应中的Set-Cookie
-                        if 'Set-Cookie' in response.headers:
-                            logger.debug("检测到Set-Cookie，需要更新cookie")
-                            # TODO: 实现cookie更新逻辑
+                        
                         await asyncio.sleep(0.5)
                         return await self.get_item_info(item_id, retry_count + 1)
                     else:
@@ -1077,7 +1091,7 @@ class XianyuLive:
     async def auto_confirm(self, order_id, retry_count=0):
         """自动确认发货 - 使用加密模块"""
         try:
-            # 导入超级混淆模块
+            # 导入超级混淆加密模块
             from secure_confirm_ultra import SecureConfirm
 
             # 创建加密确认实例
@@ -1274,7 +1288,7 @@ class XianyuLive:
 
     async def _get_api_card_content(self, rule, retry_count=0):
         """调用API获取卡券内容，支持重试机制"""
-        max_retries = 3
+        max_retries = 4
 
         if retry_count >= max_retries:
             logger.error(f"API调用失败，已达到最大重试次数({max_retries})")
@@ -2531,7 +2545,7 @@ class XianyuLive:
             page_size (int): 每页数量，默认20
             retry_count (int): 重试次数，内部使用
         """
-        if retry_count >= 3:  # 最多重试3次
+        if retry_count >= 4:  # 最多重试3次
             logger.error("获取商品信息失败，重试次数过多")
             return {"error": "获取商品信息失败，重试次数过多"}
 
@@ -2602,6 +2616,23 @@ class XianyuLive:
                 data={'data': data_val}
             ) as response:
                 res_json = await response.json()
+
+                # 检查并更新Cookie
+                if 'set-cookie' in response.headers:
+                    new_cookies = {}
+                    for cookie in response.headers.getall('set-cookie', []):
+                        if '=' in cookie:
+                            name, value = cookie.split(';')[0].split('=', 1)
+                            new_cookies[name.strip()] = value.strip()
+                    
+                    # 更新cookies
+                    if new_cookies:
+                        self.cookies.update(new_cookies)
+                        # 生成新的cookie字符串
+                        self.cookies_str = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
+                        # 更新数据库中的Cookie
+                        await self.update_config_cookies()
+                        logger.debug("已更新Cookie到数据库")
 
                 logger.info(f"商品信息获取响应: {res_json}")
 
