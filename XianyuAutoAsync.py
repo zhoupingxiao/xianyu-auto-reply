@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 import base64
 import os
@@ -101,6 +102,10 @@ class XianyuLive:
         # 自动发货防重复机制
         self.last_delivery_time = {}  # 记录每个商品的最后发货时间
         self.delivery_cooldown = 60  # 1分钟内不重复发货
+
+        # 自动确认发货防重复机制
+        self.confirmed_orders = {}  # 记录已确认发货的订单，防止重复确认
+        self.order_confirm_cooldown = 300  # 5分钟内不重复确认同一订单
         
         # 人工接管功能已禁用，永远走自动模式
         # self.manual_mode_conversations = set()  # 存储处于人工接管模式的会话ID
@@ -623,7 +628,6 @@ class XianyuLive:
             message_1 = message.get('1')
             if isinstance(message_1, str):
                 # 尝试从字符串中提取数字ID
-                import re
                 id_match = re.search(r'(\d{10,})', message_1)
                 if id_match:
                     logger.info(f"从message[1]字符串中提取商品ID: {id_match.group(1)}")
@@ -662,7 +666,6 @@ class XianyuLive:
                 # 从消息内容中提取数字ID
                 content = message_3.get('content', '')
                 if isinstance(content, str) and content:
-                    import re
                     id_match = re.search(r'(\d{10,})', content)
                     if id_match:
                         logger.info(f"【{self.cookie_id}】从消息内容中提取商品ID: {id_match.group(1)}")
@@ -687,7 +690,6 @@ class XianyuLive:
 
                 elif isinstance(obj, str):
                     # 从字符串中提取可能的商品ID
-                    import re
                     id_match = re.search(r'(\d{10,})', obj)
                     if id_match:
                         logger.info(f"从{path}字符串中提取商品ID: {id_match.group(1)}")
@@ -873,7 +875,6 @@ class XianyuLive:
             if not price_str:
                 return 0.0
             # 移除非数字字符，保留小数点
-            import re
             price_clean = re.sub(r'[^\d.]', '', str(price_str))
             return float(price_clean) if price_clean else 0.0
         except:
@@ -884,7 +885,6 @@ class XianyuLive:
         try:
             from db_manager import db_manager
             import aiohttp
-            import json
 
 
             # 获取当前账号的通知配置
@@ -926,7 +926,6 @@ class XianyuLive:
         """发送QQ通知"""
         try:
             import aiohttp
-            import json
 
             # 解析配置（QQ号码）
             qq_number = config.strip()
@@ -1075,6 +1074,28 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"发送自动发货通知异常: {self._safe_str(e)}")
 
+    async def auto_confirm(self, order_id, retry_count=0):
+        """自动确认发货 - 使用加密模块"""
+        try:
+            # 导入超级混淆模块
+            from secure_confirm_ultra import SecureConfirm
+
+            # 创建加密确认实例
+            secure_confirm = SecureConfirm(self.session, self.cookies_str, self.cookie_id)
+
+            # 传递必要的属性
+            secure_confirm.current_token = self.current_token
+            secure_confirm.last_token_refresh_time = self.last_token_refresh_time
+            secure_confirm.token_refresh_interval = self.token_refresh_interval
+            secure_confirm.refresh_token = self.refresh_token  # 传递refresh_token方法
+
+            # 调用加密的确认方法
+            return await secure_confirm.auto_confirm(order_id, retry_count)
+
+        except Exception as e:
+            logger.error(f"【{self.cookie_id}】加密确认模块调用失败: {self._safe_str(e)}")
+            return {"error": f"加密确认模块调用失败: {self._safe_str(e)}", "order_id": order_id}
+
     async def _auto_delivery(self, item_id: str, item_title: str = None):
         """自动发货功能"""
         try:
@@ -1099,7 +1120,6 @@ class XianyuLive:
 
                         # 解析 shareInfoJsonString 并提取 content 内容
                         try:
-                            import json
                             share_info = json.loads(shareInfoJsonString)
                             content = share_info.get('contentParams', {}).get('mainParams', {}).get('content', '')
                             if content:
@@ -1262,8 +1282,6 @@ class XianyuLive:
 
         try:
             import aiohttp
-            import json
-            import asyncio
 
             api_config = rule.get('card_api_config')
             if not api_config:
@@ -1978,11 +1996,116 @@ class XianyuLive:
             elif send_message == '快给ta一个评价吧~' or send_message == '快给ta一个评价吧～':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】评价提醒消息不处理')
                 return
+            elif send_message == '卖家人不错？送Ta闲鱼小红花':
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】小红花提醒消息不处理')
+                return
+            elif send_message == '[你已确认收货，交易成功]':
+                logger.info(f'[{msg_time}] 【{self.cookie_id}】买家确认收货消息不处理')
+                return
             elif send_message == '[你已发货]':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】发货确认消息不处理')
                 return
             elif send_message == '[我已付款，等待你发货]':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】买家已付款，准备自动发货')
+
+                # 提取orderId并打印
+                try:
+                    order_id = None
+
+                    # 先查看消息的完整结构
+                    logger.info(f"【{self.cookie_id}】🔍 完整消息结构: {message}")
+
+                    # 检查message['1']的结构
+                    message_1 = message.get('1', {})
+                    logger.info(f"【{self.cookie_id}】🔍 message['1'] keys: {list(message_1.keys()) if message_1 else 'None'}")
+
+                    # 检查message['1']['6']的结构
+                    message_1_6 = message_1.get('6', {}) if message_1 else {}
+                    logger.info(f"【{self.cookie_id}】🔍 message['1']['6'] keys: {list(message_1_6.keys()) if message_1_6 else 'None'}")
+
+                    # 方法1: 从button的targetUrl中提取orderId
+                    content_json_str = message.get('1', {}).get('6', {}).get('3', {}).get('5', '')
+                    logger.info(f"【{self.cookie_id}】🔍 content_json_str: {content_json_str[:200] if content_json_str else 'None'}...")
+
+                    if content_json_str:
+                        try:
+                            content_data = json.loads(content_json_str)
+                            logger.info(f"【{self.cookie_id}】🔍 content_data keys: {list(content_data.keys())}")
+
+                            # 方法1a: 从button的targetUrl中提取orderId
+                            target_url = content_data.get('dxCard', {}).get('item', {}).get('main', {}).get('exContent', {}).get('button', {}).get('targetUrl', '')
+                            logger.info(f"【{self.cookie_id}】🔍 button targetUrl: {target_url}")
+                            if target_url:
+                                # 从URL中提取orderId参数
+                                order_match = re.search(r'orderId=(\d+)', target_url)
+                                if order_match:
+                                    order_id = order_match.group(1)
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 从button提取到订单ID: {order_id}')
+
+                            # 方法1b: 从main的targetUrl中提取order_detail的id
+                            if not order_id:
+                                main_target_url = content_data.get('dxCard', {}).get('item', {}).get('main', {}).get('targetUrl', '')
+                                logger.info(f"【{self.cookie_id}】🔍 main targetUrl: {main_target_url}")
+                                if main_target_url:
+                                    order_match = re.search(r'order_detail\?id=(\d+)', main_target_url)
+                                    if order_match:
+                                        order_id = order_match.group(1)
+                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 从main targetUrl提取到订单ID: {order_id}')
+
+                        except Exception as parse_e:
+                            logger.error(f"解析内容JSON失败: {parse_e}")
+
+                    # 方法2: 从dynamicOperation中的order_detail URL提取orderId
+                    if not order_id and content_json_str:
+                        try:
+                            content_data = json.loads(content_json_str)
+                            dynamic_target_url = content_data.get('dynamicOperation', {}).get('changeContent', {}).get('dxCard', {}).get('item', {}).get('main', {}).get('exContent', {}).get('button', {}).get('targetUrl', '')
+                            if dynamic_target_url:
+                                # 从order_detail URL中提取id参数
+                                order_match = re.search(r'order_detail\?id=(\d+)', dynamic_target_url)
+                                if order_match:
+                                    order_id = order_match.group(1)
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 从order_detail提取到订单ID: {order_id}')
+                        except Exception as parse_e:
+                            logger.debug(f"解析dynamicOperation JSON失败: {parse_e}")
+
+                    # 如果成功获取到orderId，进行自动确认发货
+                    if order_id:
+                        # 检查是否已经确认过这个订单
+                        current_time = time.time()
+                        if order_id in self.confirmed_orders:
+                            last_confirm_time = self.confirmed_orders[order_id]
+                            if current_time - last_confirm_time < self.order_confirm_cooldown:
+                                logger.info(f'[{msg_time}] 【{self.cookie_id}】⏭️ 订单 {order_id} 已在 {self.order_confirm_cooldown} 秒内确认过，跳过重复确认')
+                            else:
+                                # 超过冷却时间，可以重新确认
+                                try:
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
+                                    confirm_result = await self.auto_confirm(order_id)
+                                    if confirm_result.get('success'):
+                                        self.confirmed_orders[order_id] = current_time
+                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
+                                    else:
+                                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
+                                except Exception as confirm_e:
+                                    logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
+                        else:
+                            # 首次确认这个订单
+                            try:
+                                logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
+                                confirm_result = await self.auto_confirm(order_id)
+                                if confirm_result.get('success'):
+                                    self.confirmed_orders[order_id] = current_time
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
+                                else:
+                                    logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
+                            except Exception as confirm_e:
+                                logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
+                    else:
+                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID')
+
+                except Exception as extract_e:
+                    logger.error(f"提取订单ID失败: {self._safe_str(extract_e)}")
 
                 # 检查是否可以进行自动发货（防重复）
                 if not self.can_auto_delivery(item_id):
@@ -2022,6 +2145,89 @@ class XianyuLive:
                 return
             elif send_message == '[已付款，待发货]':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】买家已付款，准备自动发货')
+
+                # 提取orderId并打印
+                try:
+                    order_id = None
+
+                    # 方法1: 从button的targetUrl中提取orderId
+                    content_json_str = message.get('1', {}).get('6', {}).get('3', {}).get('5', '')
+                    if content_json_str:
+                        try:
+                            content_data = json.loads(content_json_str)
+
+                            # 方法1a: 从button的targetUrl中提取orderId
+                            target_url = content_data.get('dxCard', {}).get('item', {}).get('main', {}).get('exContent', {}).get('button', {}).get('targetUrl', '')
+                            if target_url:
+                                # 从URL中提取orderId参数
+                                order_match = re.search(r'orderId=(\d+)', target_url)
+                                if order_match:
+                                    order_id = order_match.group(1)
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 从button提取到订单ID: {order_id}')
+
+                            # 方法1b: 从main的targetUrl中提取order_detail的id
+                            if not order_id:
+                                main_target_url = content_data.get('dxCard', {}).get('item', {}).get('main', {}).get('targetUrl', '')
+                                if main_target_url:
+                                    order_match = re.search(r'order_detail\?id=(\d+)', main_target_url)
+                                    if order_match:
+                                        order_id = order_match.group(1)
+                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 从main targetUrl提取到订单ID: {order_id}')
+
+                        except Exception as parse_e:
+                            logger.debug(f"解析内容JSON失败: {parse_e}")
+
+                    # 方法2: 从dynamicOperation中的order_detail URL提取orderId
+                    if not order_id and content_json_str:
+                        try:
+                            content_data = json.loads(content_json_str)
+                            dynamic_target_url = content_data.get('dynamicOperation', {}).get('changeContent', {}).get('dxCard', {}).get('item', {}).get('main', {}).get('exContent', {}).get('button', {}).get('targetUrl', '')
+                            if dynamic_target_url:
+                                # 从order_detail URL中提取id参数
+                                order_match = re.search(r'order_detail\?id=(\d+)', dynamic_target_url)
+                                if order_match:
+                                    order_id = order_match.group(1)
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 从order_detail提取到订单ID: {order_id}')
+                        except Exception as parse_e:
+                            logger.debug(f"解析dynamicOperation JSON失败: {parse_e}")
+
+                    # 如果成功获取到orderId，进行自动确认发货
+                    if order_id:
+                        # 检查是否已经确认过这个订单
+                        current_time = time.time()
+                        if order_id in self.confirmed_orders:
+                            last_confirm_time = self.confirmed_orders[order_id]
+                            if current_time - last_confirm_time < self.order_confirm_cooldown:
+                                logger.info(f'[{msg_time}] 【{self.cookie_id}】⏭️ 订单 {order_id} 已在 {self.order_confirm_cooldown} 秒内确认过，跳过重复确认')
+                            else:
+                                # 超过冷却时间，可以重新确认
+                                try:
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
+                                    confirm_result = await self.auto_confirm(order_id)
+                                    if confirm_result.get('success'):
+                                        self.confirmed_orders[order_id] = current_time
+                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
+                                    else:
+                                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
+                                except Exception as confirm_e:
+                                    logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
+                        else:
+                            # 首次确认这个订单
+                            try:
+                                logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
+                                confirm_result = await self.auto_confirm(order_id)
+                                if confirm_result.get('success'):
+                                    self.confirmed_orders[order_id] = current_time
+                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
+                                else:
+                                    logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
+                            except Exception as confirm_e:
+                                logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
+                    else:
+                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID')
+
+                except Exception as extract_e:
+                    logger.error(f"提取订单ID失败: {self._safe_str(extract_e)}")
 
                 # 检查是否可以进行自动发货（防重复）
                 if not self.can_auto_delivery(item_id):
@@ -2085,6 +2291,89 @@ class XianyuLive:
                     # 检查是否为"我已小刀，待刀成"
                     if card_title == "我已小刀，待刀成":
                         logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】检测到"我已小刀，待刀成"，准备自动发货')
+
+                        # 提取orderId并打印
+                        try:
+                            order_id = None
+
+                            # 方法1: 从button的targetUrl中提取orderId
+                            content_json_str = message.get('1', {}).get('6', {}).get('3', {}).get('5', '')
+                            if content_json_str:
+                                try:
+                                    content_data = json.loads(content_json_str)
+
+                                    # 方法1a: 从button的targetUrl中提取orderId
+                                    target_url = content_data.get('dxCard', {}).get('item', {}).get('main', {}).get('exContent', {}).get('button', {}).get('targetUrl', '')
+                                    if target_url:
+                                        # 从URL中提取orderId参数
+                                        order_match = re.search(r'orderId=(\d+)', target_url)
+                                        if order_match:
+                                            order_id = order_match.group(1)
+                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 小刀成功，从button提取到订单ID: {order_id}')
+
+                                    # 方法1b: 从main的targetUrl中提取order_detail的id
+                                    if not order_id:
+                                        main_target_url = content_data.get('dxCard', {}).get('item', {}).get('main', {}).get('targetUrl', '')
+                                        if main_target_url:
+                                            order_match = re.search(r'order_detail\?id=(\d+)', main_target_url)
+                                            if order_match:
+                                                order_id = order_match.group(1)
+                                                logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 小刀成功，从main targetUrl提取到订单ID: {order_id}')
+
+                                except Exception as parse_e:
+                                    logger.debug(f"解析内容JSON失败: {parse_e}")
+
+                            # 方法2: 从dynamicOperation中的order_detail URL提取orderId
+                            if not order_id and content_json_str:
+                                try:
+                                    content_data = json.loads(content_json_str)
+                                    dynamic_target_url = content_data.get('dynamicOperation', {}).get('changeContent', {}).get('dxCard', {}).get('item', {}).get('main', {}).get('exContent', {}).get('button', {}).get('targetUrl', '')
+                                    if dynamic_target_url:
+                                        # 从order_detail URL中提取id参数
+                                        order_match = re.search(r'order_detail\?id=(\d+)', dynamic_target_url)
+                                        if order_match:
+                                            order_id = order_match.group(1)
+                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 小刀成功，从order_detail提取到订单ID: {order_id}')
+                                except Exception as parse_e:
+                                    logger.debug(f"解析dynamicOperation JSON失败: {parse_e}")
+
+                            # 如果成功获取到orderId，进行自动确认发货
+                            if order_id:
+                                # 检查是否已经确认过这个订单
+                                current_time = time.time()
+                                if order_id in self.confirmed_orders:
+                                    last_confirm_time = self.confirmed_orders[order_id]
+                                    if current_time - last_confirm_time < self.order_confirm_cooldown:
+                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】⏭️ 订单 {order_id} 已在 {self.order_confirm_cooldown} 秒内确认过，跳过重复确认')
+                                    else:
+                                        # 超过冷却时间，可以重新确认
+                                        try:
+                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】小刀成功，开始自动确认发货，订单ID: {order_id}')
+                                            confirm_result = await self.auto_confirm(order_id)
+                                            if confirm_result.get('success'):
+                                                self.confirmed_orders[order_id] = current_time
+                                                logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 小刀成功，自动确认发货成功！订单ID: {order_id}')
+                                            else:
+                                                logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 小刀成功，自动确认发货失败: {confirm_result.get("error", "未知错误")}')
+                                        except Exception as confirm_e:
+                                            logger.error(f'[{msg_time}] 【{self.cookie_id}】小刀成功，自动确认发货异常: {self._safe_str(confirm_e)}')
+                                else:
+                                    # 首次确认这个订单
+                                    try:
+                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】小刀成功，开始自动确认发货，订单ID: {order_id}')
+                                        confirm_result = await self.auto_confirm(order_id)
+                                        if confirm_result.get('success'):
+                                            self.confirmed_orders[order_id] = current_time
+                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 小刀成功，自动确认发货成功！订单ID: {order_id}')
+                                        else:
+                                            logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 小刀成功，自动确认发货失败: {confirm_result.get("error", "未知错误")}')
+                                    except Exception as confirm_e:
+                                        logger.error(f'[{msg_time}] 【{self.cookie_id}】小刀成功，自动确认发货异常: {self._safe_str(confirm_e)}')
+                            else:
+                                logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 小刀成功但未能提取到订单ID')
+
+                        except Exception as extract_e:
+                            logger.error(f"提取订单ID失败: {self._safe_str(extract_e)}")
 
                         # 检查是否可以进行自动发货（防重复）
                         if not self.can_auto_delivery(item_id):

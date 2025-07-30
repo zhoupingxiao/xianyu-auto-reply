@@ -54,19 +54,14 @@ check_dependencies() {
 # 初始化配置
 init_config() {
     print_info "初始化配置文件..."
-    
+
     if [ ! -f "$ENV_FILE" ]; then
-        if [ -f ".env.example" ]; then
-            cp .env.example "$ENV_FILE"
-            print_success "已创建 $ENV_FILE 配置文件"
-        else
-            print_error ".env.example 文件不存在"
-            exit 1
-        fi
+        print_warning "$ENV_FILE 文件不存在，将使用默认配置"
+        print_info "如需自定义配置，请创建 $ENV_FILE 文件"
     else
-        print_warning "$ENV_FILE 已存在，跳过创建"
+        print_success "$ENV_FILE 配置文件已存在"
     fi
-    
+
     # 创建必要的目录
     mkdir -p data logs backups
     print_success "已创建必要的目录"
@@ -328,9 +323,7 @@ main() {
         "cleanup")
             cleanup
             ;;
-        "fix-playwright")
-            fix_playwright
-            ;;
+
         "help"|"--help"|"-h")
             show_help
             ;;

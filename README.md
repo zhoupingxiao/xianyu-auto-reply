@@ -2,8 +2,10 @@
 
 [![GitHub](https://img.shields.io/badge/GitHub-zhinianboke%2Fxianyu--auto--reply-blue?logo=github)](https://github.com/zhinianboke/xianyu-auto-reply)
 [![Docker](https://img.shields.io/badge/Docker-一键部署-blue?logo=docker)](https://github.com/zhinianboke/xianyu-auto-reply#-快速开始)
+[![Python](https://img.shields.io/badge/Python-3.11+-green?logo=python)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-一个功能完整的闲鱼自动回复和管理系统，支持多用户、多账号管理，具备智能回复、自动发货、商品管理等企业级功能。
+一个功能完整的闲鱼自动回复和管理系统，支持多用户、多账号管理，具备智能回复、自动发货、自动确认发货、商品管理等企业级功能。
 
 ## ✨ 核心特性
 
@@ -34,6 +36,8 @@
 - **多种触发** - 支持付款消息、小刀消息等多种触发条件
 - **防重复发货** - 智能防重复机制，避免重复发货
 - **多种发货方式** - 支持文本内容、卡密文件、API调用等发货方式
+- **自动确认发货** - 检测到付款后自动调用闲鱼API确认发货
+- **防重复确认** - 智能防重复确认机制，避免重复API调用
 - **发货统计** - 完整的发货记录和统计功能
 
 ### 🛍️ 商品管理
@@ -73,7 +77,8 @@ xianyu-auto-reply/
 │   ├── cookie_manager.py          # Cookie和账号管理
 │   ├── ai_reply_engine.py         # AI智能回复引擎
 │   ├── file_log_collector.py      # 日志收集和管理
-│   └── config.py                  # 配置文件管理
+│   ├── config.py                  # 配置文件管理
+│   └── secure_confirm_ultra.py    # 自动确认发货模块（加密保护）
 ├── 🛠️ 工具模块
 │   └── utils/
 │       ├── xianyu_utils.py        # 闲鱼API工具函数
@@ -207,7 +212,7 @@ docker rm -f xianyu-auto-reply
 ### 4. 设置自动发货
 - 添加发货规则，设置商品关键词和发货内容
 - 支持文本内容和卡密文件两种发货方式
-- 系统检测到付款消息时自动发货
+- 系统检测到付款消息时自动确认发货并自动发货
 
 ### 5. 使用商品搜索功能
 - 访问商品搜索页面（需要登录）
@@ -240,40 +245,45 @@ docker rm -f xianyu-auto-reply
 └─────────────────────────────────────┘
 ```
 
-## 📁 项目结构
+## 📁 核心文件功能说明
 
-```
-xianyu-auto-reply/
-├── Start.py                    # 主启动文件
-├── XianyuAutoAsync.py         # 闲鱼WebSocket客户端核心
-├── reply_server.py            # FastAPI Web服务器
-├── db_manager.py              # 数据库管理模块
-├── cookie_manager.py          # Cookie和任务管理
-├── ai_reply_engine.py         # AI回复引擎
-├── config.py                  # 配置管理
-├── file_log_collector.py      # 日志收集器
-├── global_config.yml          # 全局配置文件
-├── requirements.txt           # Python依赖
-├── docker-compose.yml         # Docker编排配置
-├── Dockerfile                 # Docker镜像构建
-├── utils/                     # 工具模块
-│   ├── item_search.py        # 商品搜索功能
-│   └── ...                   # 其他工具模块
-├── static/                    # 前端静态文件
-│   ├── index.html            # 主界面
-│   ├── login.html            # 登录页面
-│   ├── register.html         # 注册页面
-│   ├── item_search.html      # 商品搜索页面
-│   ├── user_management.html  # 用户管理页面
-│   ├── data_management.html  # 数据管理页面
-│   ├── log_management.html   # 日志管理页面
-│   └── lib/                  # 本地静态资源库
-│       ├── bootstrap/        # Bootstrap框架
-│       └── bootstrap-icons/  # Bootstrap图标
-├── logs/                      # 日志文件目录
-├── data/                      # 数据库文件目录
-└── backups/                   # 备份文件目录
-```
+### 🚀 启动和核心模块
+- **`Start.py`** - 项目启动入口，初始化所有服务和组件
+- **`XianyuAutoAsync.py`** - 闲鱼WebSocket连接核心，处理消息收发和自动回复
+- **`reply_server.py`** - FastAPI Web服务器，提供管理界面和API接口
+- **`cookie_manager.py`** - 多账号Cookie管理，负责账号任务的启动和停止
+
+### 🗄️ 数据和配置管理
+- **`db_manager.py`** - SQLite数据库管理，处理用户数据、商品信息、关键词等
+- **`config.py`** - 配置文件管理，加载和管理全局配置
+- **`global_config.yml`** - 全局配置文件，包含所有系统配置项
+
+### 🤖 智能功能模块
+- **`ai_reply_engine.py`** - AI智能回复引擎，支持多种AI模型
+- **`secure_confirm_ultra.py`** - 自动确认发货模块（加密保护）
+- **`file_log_collector.py`** - 日志收集和管理，提供实时日志查看
+
+### 🛠️ 工具模块
+- **`utils/xianyu_utils.py`** - 闲鱼API工具函数，包含加密解密、签名生成等
+- **`utils/message_utils.py`** - 消息格式化工具
+- **`utils/ws_utils.py`** - WebSocket客户端工具
+- **`utils/item_search.py`** - 商品搜索功能，基于Playwright技术
+
+### 🌐 前端界面
+- **`static/index.html`** - 主管理界面，账号管理和系统监控
+- **`static/login.html`** - 用户登录页面
+- **`static/register.html`** - 用户注册页面，支持邮箱验证
+- **`static/user_management.html`** - 用户管理页面（管理员功能）
+- **`static/data_management.html`** - 数据管理页面，关键词导入导出
+- **`static/log_management.html`** - 日志管理页面，实时日志查看
+- **`static/item_search.html`** - 商品搜索页面，获取真实闲鱼数据
+
+### 🐳 部署配置
+- **`Dockerfile`** - Docker镜像构建文件，包含完整运行环境
+- **`docker-compose.yml`** - Docker Compose配置，支持一键部署
+- **`docker-deploy.sh`** - Docker部署脚本，提供完整的部署管理功能
+- **`.env`** - 环境变量配置文件，包含所有可配置项
+- **`requirements.txt`** - Python依赖包列表
 
 ## ⚙️ 配置说明
 
@@ -363,6 +373,34 @@ curl http://localhost:8080/health
 - **数据隔离**：用户数据完全隔离
 - **会话管理**：安全的会话超时机制
 - **操作日志**：完整的用户操作记录
+- **代码加密**：核心业务逻辑采用多层加密保护
+
+## 🛡️ 技术特性
+
+### 🏗️ 架构设计
+- **微服务架构**：模块化设计，易于维护和扩展
+- **异步编程**：基于asyncio的高性能异步处理
+- **WebSocket长连接**：实时消息处理，低延迟响应
+- **RESTful API**：标准化的API接口设计
+
+### 🔧 技术栈
+- **后端框架**：FastAPI + Uvicorn
+- **数据库**：SQLite（轻量级，无需额外配置）
+- **前端技术**：原生HTML/CSS/JavaScript + Bootstrap
+- **WebSocket**：实时双向通信
+- **容器化**：Docker + Docker Compose
+
+### 🚀 性能优化
+- **连接池管理**：高效的数据库连接管理
+- **异步处理**：非阻塞I/O操作
+- **内存优化**：智能缓存和垃圾回收
+- **资源限制**：Docker容器资源限制和监控
+
+### 🔐 安全机制
+- **多层加密**：敏感代码采用5层编码混淆
+- **变量名随机化**：防止静态分析
+- **运行时解密**：代码在内存中动态解密执行
+- **防重复机制**：智能防重复确认和发货
 
 ## 🤝 贡献指南
 

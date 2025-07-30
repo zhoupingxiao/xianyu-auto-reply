@@ -3,8 +3,9 @@ FROM python:3.11-slim
 
 # 设置标签信息
 LABEL maintainer="Xianyu Auto Reply System"
-LABEL version="1.0.0"
-LABEL description="闲鱼自动回复系统 - Docker版本"
+LABEL version="2.0.0"
+LABEL description="闲鱼自动回复系统 - 企业级多用户版本"
+LABEL repository="https://github.com/zhinianboke/xianyu-auto-reply"
 
 # 设置工作目录
 WORKDIR /app
