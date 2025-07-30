@@ -493,6 +493,15 @@ docker restart xianyu-auto-reply
 - **功能建议**：欢迎提出改进建议
 - **Bug反馈**：发现问题请及时反馈
 
+## 🧸 特别鸣谢
+
+本项目参考了以下开源项目：
+
+- **[XianYuApis](https://github.com/cv-cat/XianYuApis)** - 提供了闲鱼API接口的技术参考
+- **[XianyuAutoAgent](https://github.com/shaxiu/XianyuAutoAgent)** - 提供了自动化处理的实现思路
+
+感谢这些优秀的开源项目为本项目的开发提供了宝贵的参考和启发！
+
 ---
 
 🎉 **开始使用闲鱼自动回复系统，让您的闲鱼店铺管理更加智能高效！**
