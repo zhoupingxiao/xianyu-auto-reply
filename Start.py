@@ -93,10 +93,22 @@ async def main():
             continue
 
         try:
-            await manager._add_cookie_async(cid, val)
-            logger.info(f"启动数据库中的 Cookie 任务: {cid}")
+            # 直接启动任务，不重新保存到数据库
+            from db_manager import db_manager
+            logger.info(f"正在获取Cookie详细信息: {cid}")
+            cookie_info = db_manager.get_cookie_details(cid)
+            user_id = cookie_info.get('user_id') if cookie_info else None
+            logger.info(f"Cookie详细信息获取成功: {cid}, user_id: {user_id}")
+
+            logger.info(f"正在创建异步任务: {cid}")
+            task = loop.create_task(manager._run_xianyu(cid, val, user_id))
+            manager.tasks[cid] = task
+            logger.info(f"启动数据库中的 Cookie 任务: {cid} (用户ID: {user_id})")
+            logger.info(f"任务已添加到管理器，当前任务数: {len(manager.tasks)}")
         except Exception as e:
             logger.error(f"启动 Cookie 任务失败: {cid}, {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
     
     # 2) 如果配置文件中有新的 Cookie，也加载它们
     for entry in COOKIES_LIST:

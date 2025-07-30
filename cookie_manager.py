@@ -53,14 +53,24 @@ class CookieManager:
     # ------------------------ 内部协程 ------------------------
     async def _run_xianyu(self, cookie_id: str, cookie_value: str, user_id: int = None):
         """在事件循环中启动 XianyuLive.main"""
-        from XianyuAutoAsync import XianyuLive  # 延迟导入，避免循环
+        logger.info(f"【{cookie_id}】_run_xianyu方法开始执行...")
+
         try:
+            logger.info(f"【{cookie_id}】正在导入XianyuLive...")
+            from XianyuAutoAsync import XianyuLive  # 延迟导入，避免循环
+            logger.info(f"【{cookie_id}】XianyuLive导入成功")
+
+            logger.info(f"【{cookie_id}】开始创建XianyuLive实例...")
+            logger.info(f"【{cookie_id}】Cookie值长度: {len(cookie_value)}")
             live = XianyuLive(cookie_value, cookie_id=cookie_id, user_id=user_id)
+            logger.info(f"【{cookie_id}】XianyuLive实例创建成功，开始调用main()...")
             await live.main()
         except asyncio.CancelledError:
             logger.info(f"XianyuLive 任务已取消: {cookie_id}")
         except Exception as e:
             logger.error(f"XianyuLive 任务异常({cookie_id}): {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
 
     async def _add_cookie_async(self, cookie_id: str, cookie_value: str, user_id: int = None):
         if cookie_id in self.tasks:

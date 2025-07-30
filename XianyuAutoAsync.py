@@ -55,17 +55,27 @@ class XianyuLive:
 
     def __init__(self, cookies_str=None, cookie_id: str = "default", user_id: int = None):
         """初始化闲鱼直播类"""
+        logger.info(f"【{cookie_id}】开始初始化XianyuLive...")
+
         if not cookies_str:
             cookies_str = COOKIES_STR
         if not cookies_str:
             raise ValueError("未提供cookies，请在global_config.yml中配置COOKIES_STR或通过参数传入")
 
+        logger.info(f"【{cookie_id}】解析cookies...")
         self.cookies = trans_cookies(cookies_str)
+        logger.info(f"【{cookie_id}】cookies解析完成，包含字段: {list(self.cookies.keys())}")
+
         self.cookie_id = cookie_id  # 唯一账号标识
         self.cookies_str = cookies_str  # 保存原始cookie字符串
         self.user_id = user_id  # 保存用户ID，用于token刷新时保持正确的所有者关系
         self.base_url = WEBSOCKET_URL
+
+        if 'unb' not in self.cookies:
+            raise ValueError(f"【{cookie_id}】Cookie中缺少必需的'unb'字段，当前字段: {list(self.cookies.keys())}")
+
         self.myid = self.cookies['unb']
+        logger.info(f"【{cookie_id}】用户ID: {self.myid}")
         self.device_id = generate_device_id(self.myid)
         
         # 心跳相关配置
@@ -2161,7 +2171,10 @@ class XianyuLive:
     async def main(self):
         """主程序入口"""
         try:
+            logger.info(f"【{self.cookie_id}】开始启动XianyuLive主程序...")
             await self.create_session()  # 创建session
+            logger.info(f"【{self.cookie_id}】Session创建完成，开始WebSocket连接循环...")
+
             while True:
                 try:
                     # 检查账号是否启用
@@ -2173,16 +2186,27 @@ class XianyuLive:
                     headers = WEBSOCKET_HEADERS.copy()
                     headers['Cookie'] = self.cookies_str
 
+                    logger.info(f"【{self.cookie_id}】准备建立WebSocket连接到: {self.base_url}")
+                    logger.debug(f"【{self.cookie_id}】WebSocket headers: {headers}")
+
                     # 兼容不同版本的websockets库
                     async with await self._create_websocket_connection(headers) as websocket:
+                        logger.info(f"【{self.cookie_id}】WebSocket连接建立成功！")
                         self.ws = websocket
+
+                        logger.info(f"【{self.cookie_id}】开始初始化WebSocket连接...")
                         await self.init(websocket)
+                        logger.info(f"【{self.cookie_id}】WebSocket初始化完成！")
 
                         # 启动心跳任务
+                        logger.info(f"【{self.cookie_id}】启动心跳任务...")
                         self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(websocket))
 
                         # 启动token刷新任务
+                        logger.info(f"【{self.cookie_id}】启动token刷新任务...")
                         self.token_refresh_task = asyncio.create_task(self.token_refresh_loop())
+
+                        logger.info(f"【{self.cookie_id}】开始监听WebSocket消息...")
 
                         async for message in websocket:
                             try:
