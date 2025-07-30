@@ -378,7 +378,7 @@
 
     .keyword-input-group {
       display: grid;
-      grid-template-columns: 1fr 2fr auto;
+      grid-template-columns: 1fr 2fr 1fr auto;
       gap: 1rem;
       align-items: end;
     }
@@ -399,7 +399,7 @@
       z-index: 1;
     }
 
-    .input-field input {
+    .input-field input, .input-field select {
       width: 100%;
       padding: 1rem 0.75rem 0.75rem;
       border: 2px solid #e5e7eb;
@@ -1483,8 +1483,18 @@
               <i class="bi bi-chat-dots me-2"></i>
               关键词管理
             </h3>
-            <div class="account-badge" id="currentAccountBadge">
-              <!-- 动态显示当前账号 -->
+            <div class="d-flex align-items-center gap-2">
+              <div class="account-badge" id="currentAccountBadge">
+                <!-- 动态显示当前账号 -->
+              </div>
+              <div class="btn-group" role="group">
+                <button class="btn btn-outline-success btn-sm" onclick="exportKeywords()" title="导出关键词">
+                  <i class="bi bi-download"></i> 导出
+                </button>
+                <button class="btn btn-outline-primary btn-sm" onclick="showImportModal()" title="导入关键词">
+                  <i class="bi bi-upload"></i> 导入
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1493,11 +1503,17 @@
             <div class="keyword-input-group">
               <div class="input-field">
                 <label>关键词</label>
-                <input type="text" id="newKeyword" placeholder="例如：你好、价格、发货...">
+                <input type="text" id="newKeyword" placeholder="例如：你好">
               </div>
               <div class="input-field">
                 <label>自动回复内容</label>
                 <input type="text" id="newReply" placeholder="例如：您好，欢迎咨询！有什么可以帮助您的吗？">
+              </div>
+              <div class="input-field">
+                <label>商品ID（可选）</label>
+                <select id="newItemIdSelect" class="form-select">
+                  <option value="">选择商品或留空表示通用关键词</option>
+                </select>
               </div>
               <button class="add-btn" onclick="addKeyword()">
                 <i class="bi bi-plus-lg"></i>
@@ -1551,6 +1567,7 @@
                         <th>卡券名称</th>
                         <th>类型</th>
                         <th>数据量</th>
+                        <th>延时时间</th>
                         <th>状态</th>
                         <th>创建时间</th>
                         <th>操作</th>
@@ -1558,7 +1575,7 @@
                     </thead>
                     <tbody id="cardsTableBody">
                       <tr>
-                        <td colspan="6" class="text-center py-4 text-muted">
+                        <td colspan="7" class="text-center py-4 text-muted">
                           <i class="bi bi-credit-card fs-1 d-block mb-3"></i>
                           <h5>暂无卡券数据</h5>
                           <p class="mb-0">点击"添加卡券"开始创建您的第一个卡券</p>
@@ -2216,6 +2233,18 @@
             </div>
 
             <div class="mb-3">
+              <label class="form-label">延时发货时间</label>
+              <div class="input-group">
+                <input type="number" class="form-control" id="cardDelaySeconds" value="0" min="0" max="3600" placeholder="0">
+                <span class="input-group-text">秒</span>
+              </div>
+              <small class="form-text text-muted">
+                <i class="bi bi-clock me-1"></i>
+                设置自动发货的延时时间，0表示立即发货，最大3600秒(1小时)
+              </small>
+            </div>
+
+            <div class="mb-3">
               <label class="form-label">备注信息</label>
               <textarea class="form-control" id="cardDescription" rows="3" placeholder="可选的备注信息，支持变量替换：&#10;{DELIVERY_CONTENT} - 发货内容&#10;例如：您的卡券信息：{DELIVERY_CONTENT}，请妥善保管。"></textarea>
               <small class="form-text text-muted">
@@ -2331,8 +2360,24 @@
             </div>
 
             <div class="mb-3">
-              <label class="form-label">备注</label>
-              <textarea class="form-control" id="editCardDescription" rows="2"></textarea>
+              <label class="form-label">延时发货时间</label>
+              <div class="input-group">
+                <input type="number" class="form-control" id="editCardDelaySeconds" value="0" min="0" max="3600" placeholder="0">
+                <span class="input-group-text">秒</span>
+              </div>
+              <small class="form-text text-muted">
+                <i class="bi bi-clock me-1"></i>
+                设置自动发货的延时时间，0表示立即发货，最大3600秒(1小时)
+              </small>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">备注信息</label>
+              <textarea class="form-control" id="editCardDescription" rows="3" placeholder="可选的备注信息，支持变量替换：&#10;{DELIVERY_CONTENT} - 发货内容&#10;例如：您的卡券信息：{DELIVERY_CONTENT}，请妥善保管。"></textarea>
+              <small class="form-text text-muted">
+                <i class="bi bi-info-circle me-1"></i>
+                备注内容会与发货内容一起发送。使用 <code>{DELIVERY_CONTENT}</code> 变量可以在备注中插入实际的发货内容。
+              </small>
             </div>
           </form>
         </div>
@@ -2897,7 +2942,7 @@
           console.log(`加载关键词时账号 ${accountId} 状态: enabled=${currentAccount?.enabled}, accountStatus=${accountStatus}`); // 调试信息
         }
 
-        const response = await fetch(`${apiBase}/keywords/${accountId}`, {
+        const response = await fetch(`${apiBase}/keywords-with-item-id/${accountId}`, {
           headers: {
             'Authorization': `Bearer ${authToken}`
           }
@@ -2907,15 +2952,15 @@
           const data = await response.json();
           console.log('从服务器获取的关键词数据:', data); // 调试信息
 
-          // 后端返回的是 [[keyword, reply], ...] 格式，转换为前端需要的格式
-          const formattedData = data.map(([keyword, reply]) => ({
-            keyword: keyword,
-            reply: reply
-          }));
+          // 后端返回的是 [{keyword, reply, item_id}, ...] 格式，直接使用
+          const formattedData = data;
 
           console.log('格式化后的关键词数据:', formattedData); // 调试信息
           keywordsData[accountId] = formattedData;
           renderKeywordsList(formattedData);
+
+          // 加载商品列表
+          await loadItemsList(accountId);
 
           // 更新账号徽章显示
           updateAccountBadge(accountId, accountStatus);
@@ -2962,10 +3007,50 @@
       }
     }
 
+    // 加载商品列表
+    async function loadItemsList(accountId) {
+      try {
+        const response = await fetch(`${apiBase}/items/${accountId}`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const items = data.items || [];
+
+          // 更新商品选择下拉框
+          const selectElement = document.getElementById('newItemIdSelect');
+          if (selectElement) {
+            // 清空现有选项（保留第一个默认选项）
+            selectElement.innerHTML = '<option value="">选择商品或留空表示通用关键词</option>';
+
+            // 添加商品选项
+            items.forEach(item => {
+              const option = document.createElement('option');
+              option.value = item.item_id;
+              option.textContent = `${item.item_id} - ${item.item_title}`;
+              selectElement.appendChild(option);
+            });
+          }
+
+          console.log(`加载了 ${items.length} 个商品到选择列表`);
+        } else {
+          console.warn('加载商品列表失败:', response.status);
+        }
+      } catch (error) {
+        console.error('加载商品列表时发生错误:', error);
+      }
+    }
+
+
+
     // 添加或更新关键词
     async function addKeyword() {
       const keyword = document.getElementById('newKeyword').value.trim();
       const reply = document.getElementById('newReply').value.trim();
+      const itemId = document.getElementById('newItemIdSelect').value.trim();
 
       if (!keyword || !reply) {
         showToast('请填写关键词和回复内容', 'warning');
@@ -2992,31 +3077,42 @@
           currentKeywords.splice(window.editingIndex, 1);
         }
 
-        // 检查关键词是否已存在（排除编辑的原关键词）
-        const existingKeyword = currentKeywords.find(item => item.keyword === keyword);
-        if (existingKeyword && (!isEditMode || keyword !== window.originalKeyword)) {
-          showToast(`关键词 "${keyword}" 已存在，请使用其他关键词`, 'warning');
+        // 准备要保存的关键词列表
+        let keywordsToSave = [...currentKeywords];
+
+        // 如果是编辑模式，先移除原关键词
+        if (isEditMode && typeof window.editingIndex !== 'undefined') {
+          keywordsToSave.splice(window.editingIndex, 1);
+        }
+
+        // 检查关键词是否已存在（考虑商品ID）
+        const existingKeyword = keywordsToSave.find(item =>
+          item.keyword === keyword &&
+          (item.item_id || '') === (itemId || '')
+        );
+        if (existingKeyword) {
+          const itemIdText = itemId ? `（商品ID: ${itemId}）` : '（通用关键词）';
+          showToast(`关键词 "${keyword}" ${itemIdText} 已存在，请使用其他关键词或商品ID`, 'warning');
           toggleLoading(false);
           return;
         }
 
-        // 转换为后端期望的格式
-        const keywordsObj = {};
-        currentKeywords.forEach(item => {
-          keywordsObj[item.keyword] = item.reply;
-        });
-
         // 添加新关键词或更新的关键词
-        keywordsObj[keyword] = reply;
+        const newKeyword = {
+          keyword: keyword,
+          reply: reply,
+          item_id: itemId || ''
+        };
+        keywordsToSave.push(newKeyword);
 
-        const response = await fetch(`${apiBase}/keywords/${currentCookieId}`, {
+        const response = await fetch(`${apiBase}/keywords-with-item-id/${currentCookieId}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${authToken}`
           },
           body: JSON.stringify({
-            keywords: keywordsObj
+            keywords: keywordsToSave
           })
         });
 
@@ -3026,10 +3122,14 @@
           // 清空输入框并重置样式
           const keywordInput = document.getElementById('newKeyword');
           const replyInput = document.getElementById('newReply');
+          const selectElement = document.getElementById('newItemIdSelect');
           const addBtn = document.querySelector('.add-btn');
 
           keywordInput.value = '';
           replyInput.value = '';
+          if (selectElement) {
+            selectElement.value = '';
+          }
           keywordInput.style.borderColor = '#e5e7eb';
           replyInput.style.borderColor = '#e5e7eb';
           addBtn.style.opacity = '0.7';
@@ -3105,11 +3205,17 @@
 
         const keywordItem = document.createElement('div');
         keywordItem.className = 'keyword-item';
+        // 商品ID显示
+        const itemIdDisplay = item.item_id ?
+          `<small class="text-muted d-block"><i class="bi bi-box"></i> 商品ID: ${item.item_id}</small>` :
+          '<small class="text-muted d-block"><i class="bi bi-globe"></i> 通用关键词</small>';
+
         keywordItem.innerHTML = `
           <div class="keyword-item-header">
             <div class="keyword-tag">
               <i class="bi bi-tag-fill"></i>
               ${item.keyword}
+              ${itemIdDisplay}
             </div>
             <div class="keyword-actions">
               <button class="action-btn edit-btn" onclick="editKeyword(${index})" title="编辑">
@@ -3149,9 +3255,16 @@
       document.getElementById('newKeyword').value = keyword.keyword;
       document.getElementById('newReply').value = keyword.reply;
 
+      // 设置商品ID选择框
+      const selectElement = document.getElementById('newItemIdSelect');
+      if (selectElement) {
+        selectElement.value = keyword.item_id || '';
+      }
+
       // 设置编辑模式标识
       window.editingIndex = index;
       window.originalKeyword = keyword.keyword;
+      window.originalItemId = keyword.item_id || '';
 
       // 更新按钮文本和样式
       const addBtn = document.querySelector('.add-btn');
@@ -3195,9 +3308,16 @@
       document.getElementById('newKeyword').value = '';
       document.getElementById('newReply').value = '';
 
+      // 清空商品ID选择框
+      const selectElement = document.getElementById('newItemIdSelect');
+      if (selectElement) {
+        selectElement.value = '';
+      }
+
       // 重置编辑状态
       delete window.editingIndex;
       delete window.originalKeyword;
+      delete window.originalItemId;
 
       // 恢复添加按钮
       const addBtn = document.querySelector('.add-btn');
@@ -3227,21 +3347,15 @@
         // 移除指定索引的关键词
         currentKeywords.splice(index, 1);
 
-        // 转换为后端期望的格式
-        const keywordsObj = {};
-        currentKeywords.forEach(item => {
-          keywordsObj[item.keyword] = item.reply;
-        });
-
         // 更新服务器
-        const response = await fetch(`${apiBase}/keywords/${cookieId}`, {
+        const response = await fetch(`${apiBase}/keywords-with-item-id/${cookieId}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${authToken}`
           },
           body: JSON.stringify({
-            keywords: keywordsObj
+            keywords: currentKeywords
           })
         });
 
@@ -4825,7 +4939,7 @@
       if (cards.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="6" class="text-center py-4 text-muted">
+            <td colspan="7" class="text-center py-4 text-muted">
               <i class="bi bi-credit-card fs-1 d-block mb-3"></i>
               <h5>暂无卡券数据</h5>
               <p class="mb-0">点击"添加卡券"开始创建您的第一个卡券</p>
@@ -4870,6 +4984,11 @@
           dataCount = '1';
         }
 
+        // 延时时间显示
+        const delayDisplay = card.delay_seconds > 0 ?
+          `${card.delay_seconds}秒` :
+          '<span class="text-muted">立即</span>';
+
         tr.innerHTML = `
           <td>
             <div class="fw-bold">${card.name}</div>
@@ -4877,6 +4996,7 @@
           </td>
           <td>${typeBadge}</td>
           <td>${dataCount}</td>
+          <td>${delayDisplay}</td>
           <td>${statusBadge}</td>
           <td>
             <small class="text-muted">${new Date(card.created_at).toLocaleString('zh-CN')}</small>
@@ -4945,6 +5065,7 @@
           name: cardName,
           type: cardType,
           description: document.getElementById('cardDescription').value,
+          delay_seconds: parseInt(document.getElementById('cardDelaySeconds').value) || 0,
           enabled: true
         };
 
@@ -5234,6 +5355,7 @@
           document.getElementById('editCardName').value = card.name;
           document.getElementById('editCardType').value = card.type;
           document.getElementById('editCardDescription').value = card.description || '';
+          document.getElementById('editCardDelaySeconds').value = card.delay_seconds || 0;
           document.getElementById('editCardEnabled').checked = card.enabled;
 
           // 根据类型填充特定字段
@@ -5289,6 +5411,7 @@
           name: cardName,
           type: cardType,
           description: document.getElementById('editCardDescription').value,
+          delay_seconds: parseInt(document.getElementById('editCardDelaySeconds').value) || 0,
           enabled: document.getElementById('editCardEnabled').checked
         };
 
@@ -6941,7 +7064,134 @@
       }
     }
 
+    // ==================== 导入导出功能 ====================
 
+    // 导出关键词
+    async function exportKeywords() {
+      if (!currentCookieId) {
+        showToast('请先选择账号', 'warning');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${apiBase}/keywords-export/${currentCookieId}`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+
+        if (response.ok) {
+          // 创建下载链接
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+
+          // 根据当前账号是否有数据来设置文件名和提示
+          const currentKeywords = keywordsData[currentCookieId] || [];
+          const hasData = currentKeywords.length > 0;
+
+          if (hasData) {
+            a.download = `keywords_${currentCookieId}_${new Date().getTime()}.xlsx`;
+            showToast('关键词导出成功！', 'success');
+          } else {
+            a.download = `keywords_template_${currentCookieId}_${new Date().getTime()}.xlsx`;
+            showToast('导入模板导出成功！模板中包含示例数据供参考', 'success');
+          }
+
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+        } else {
+          const error = await response.json();
+          showToast(`导出失败: ${error.detail}`, 'error');
+        }
+      } catch (error) {
+        console.error('导出关键词失败:', error);
+        showToast('导出关键词失败', 'error');
+      }
+    }
+
+    // 显示导入模态框
+    function showImportModal() {
+      if (!currentCookieId) {
+        showToast('请先选择账号', 'warning');
+        return;
+      }
+
+      const modal = new bootstrap.Modal(document.getElementById('importKeywordsModal'));
+      modal.show();
+    }
+
+    // 导入关键词
+    async function importKeywords() {
+      if (!currentCookieId) {
+        showToast('请先选择账号', 'warning');
+        return;
+      }
+
+      const fileInput = document.getElementById('importFileInput');
+      const file = fileInput.files[0];
+
+      if (!file) {
+        showToast('请选择要导入的Excel文件', 'warning');
+        return;
+      }
+
+      try {
+        // 显示进度条
+        const progressDiv = document.getElementById('importProgress');
+        const progressBar = progressDiv.querySelector('.progress-bar');
+        progressDiv.style.display = 'block';
+        progressBar.style.width = '30%';
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`${apiBase}/keywords-import/${currentCookieId}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: formData
+        });
+
+        progressBar.style.width = '70%';
+
+        if (response.ok) {
+          const result = await response.json();
+          progressBar.style.width = '100%';
+
+          setTimeout(() => {
+            progressDiv.style.display = 'none';
+            progressBar.style.width = '0%';
+
+            // 关闭模态框
+            const modal = bootstrap.Modal.getInstance(document.getElementById('importKeywordsModal'));
+            modal.hide();
+
+            // 清空文件输入
+            fileInput.value = '';
+
+            // 重新加载关键词列表
+            loadAccountKeywords(currentCookieId);
+
+            showToast(`导入成功！新增: ${result.added}, 更新: ${result.updated}`, 'success');
+          }, 500);
+        } else {
+          const error = await response.json();
+          progressDiv.style.display = 'none';
+          progressBar.style.width = '0%';
+          showToast(`导入失败: ${error.detail}`, 'error');
+        }
+      } catch (error) {
+        console.error('导入关键词失败:', error);
+        document.getElementById('importProgress').style.display = 'none';
+        document.querySelector('#importProgress .progress-bar').style.width = '0%';
+        showToast('导入关键词失败', 'error');
+      }
+    }
 
   </script>
 
@@ -7097,6 +7347,51 @@
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
           <button type="button" class="btn btn-primary" onclick="saveAIReplyConfig()">
             <i class="bi bi-check-lg me-1"></i>保存配置
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导入关键词模态框 -->
+  <div class="modal fade" id="importKeywordsModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="bi bi-upload me-2"></i>导入关键词
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">选择Excel文件</label>
+            <input type="file" class="form-control" id="importFileInput" accept=".xlsx,.xls">
+            <div class="form-text">
+              <i class="bi bi-info-circle me-1"></i>
+              请上传包含"关键词"、"商品ID"、"关键词内容"三列的Excel文件
+            </div>
+          </div>
+          <div class="alert alert-warning">
+            <h6><i class="bi bi-exclamation-triangle me-1"></i>导入说明：</h6>
+            <ul class="mb-0">
+              <li>Excel文件必须包含三列：关键词、商品ID、关键词内容</li>
+              <li>商品ID可以为空，表示通用关键词</li>
+              <li>如果关键词+商品ID组合已存在，将更新关键词内容</li>
+              <li>导入将覆盖当前账号的所有关键词数据</li>
+            </ul>
+          </div>
+          <div id="importProgress" style="display: none;">
+            <div class="progress mb-2">
+              <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+            </div>
+            <small class="text-muted">正在导入...</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-primary" onclick="importKeywords()">
+            <i class="bi bi-upload me-1"></i>开始导入
           </button>
         </div>
       </div>

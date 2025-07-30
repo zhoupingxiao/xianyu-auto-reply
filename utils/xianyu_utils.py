@@ -21,9 +21,38 @@ def get_js_path():
     return js_path
 
 try:
+    # 检查JavaScript运行时是否可用
+    available_runtimes = execjs.runtime_names
+    logger.info(f"可用的JavaScript运行时: {available_runtimes}")
+
+    # 尝试获取默认运行时
+    current_runtime = execjs.get()
+    logger.info(f"当前JavaScript运行时: {current_runtime.name}")
+
     xianyu_js = execjs.compile(open(get_js_path(), 'r', encoding='utf-8').read())
+    logger.info("JavaScript文件加载成功")
 except Exception as e:
-    raise RuntimeError(f"无法加载JavaScript文件: {e}")
+    error_msg = str(e)
+    logger.error(f"JavaScript运行时错误: {error_msg}")
+
+    if "Could not find an available JavaScript runtime" in error_msg:
+        logger.error("解决方案:")
+        logger.error("1. 确保已安装Node.js: apt-get install nodejs")
+        logger.error("2. 或安装其他JS运行时: apt-get install nodejs npm")
+        logger.error("3. 检查PATH环境变量是否包含Node.js路径")
+
+        # 尝试检测系统中的JavaScript运行时
+        import subprocess
+        try:
+            result = subprocess.run(['node', '--version'], capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info(f"检测到Node.js版本: {result.stdout.strip()}")
+            else:
+                logger.error("Node.js未正确安装或不在PATH中")
+        except FileNotFoundError:
+            logger.error("未找到Node.js可执行文件")
+
+    raise RuntimeError(f"无法加载JavaScript文件: {error_msg}")
 
 def trans_cookies(cookies_str: str) -> dict:
     """将cookies字符串转换为字典"""

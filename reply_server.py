@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import List, Tuple, Optional, Dict, Any
@@ -12,6 +12,8 @@ import time
 import json
 import os
 import uvicorn
+import pandas as pd
+import io
 
 import cookie_manager
 from db_manager import db_manager
@@ -1318,6 +1320,9 @@ def remove_cookie(cid: str, current_user: Dict[str, Any] = Depends(get_current_u
 class KeywordIn(BaseModel):
     keywords: Dict[str, str]  # key -> reply
 
+class KeywordWithItemIdIn(BaseModel):
+    keywords: List[Dict[str, Any]]  # [{"keyword": str, "reply": str, "item_id": str}]
+
 
 @app.get("/keywords/{cid}")
 def get_keywords(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -1333,6 +1338,35 @@ def get_keywords(cid: str, current_user: Dict[str, Any] = Depends(get_current_us
         raise HTTPException(status_code=403, detail="无权限访问该Cookie")
 
     return cookie_manager.manager.get_keywords(cid)
+
+
+@app.get("/keywords-with-item-id/{cid}")
+def get_keywords_with_item_id(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取包含商品ID的关键词列表"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查cookie是否属于当前用户
+    user_id = current_user['user_id']
+    from db_manager import db_manager
+    user_cookies = db_manager.get_all_cookies(user_id)
+
+    if cid not in user_cookies:
+        raise HTTPException(status_code=403, detail="无权限访问该Cookie")
+
+    # 获取包含商品ID的关键词
+    keywords = db_manager.get_keywords_with_item_id(cid)
+
+    # 转换为前端需要的格式
+    result = []
+    for keyword, reply, item_id in keywords:
+        result.append({
+            "keyword": keyword,
+            "reply": reply,
+            "item_id": item_id or ""
+        })
+
+    return result
 
 
 @app.post("/keywords/{cid}")
@@ -1355,6 +1389,263 @@ def update_keywords(cid: str, body: KeywordIn, current_user: Dict[str, Any] = De
     cookie_manager.manager.update_keywords(cid, kw_list)
     log_with_user('info', f"Cookie关键字更新成功: {cid}", current_user)
     return {"msg": "updated", "count": len(kw_list)}
+
+
+@app.post("/keywords-with-item-id/{cid}")
+def update_keywords_with_item_id(cid: str, body: KeywordWithItemIdIn, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """更新包含商品ID的关键词列表"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查cookie是否属于当前用户
+    user_id = current_user['user_id']
+    from db_manager import db_manager
+    user_cookies = db_manager.get_all_cookies(user_id)
+
+    if cid not in user_cookies:
+        log_with_user('warning', f"尝试操作其他用户的Cookie关键字: {cid}", current_user)
+        raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+    # 验证数据格式
+    keywords_to_save = []
+    keyword_set = set()  # 用于检查当前提交的关键词中是否有重复
+
+    for kw_data in body.keywords:
+        keyword = kw_data.get('keyword', '').strip()
+        reply = kw_data.get('reply', '').strip()
+        item_id = kw_data.get('item_id', '').strip() or None
+
+        if not keyword or not reply:
+            raise HTTPException(status_code=400, detail="关键词和回复内容不能为空")
+
+        # 检查当前提交的关键词中是否有重复
+        keyword_key = f"{keyword}|{item_id or ''}"
+        if keyword_key in keyword_set:
+            item_id_text = f"（商品ID: {item_id}）" if item_id else "（通用关键词）"
+            raise HTTPException(status_code=400, detail=f"关键词 '{keyword}' {item_id_text} 在当前提交中重复")
+        keyword_set.add(keyword_key)
+
+        keywords_to_save.append((keyword, reply, item_id))
+
+    # 保存关键词
+    success = db_manager.save_keywords_with_item_id(cid, keywords_to_save)
+    if not success:
+        raise HTTPException(status_code=500, detail="保存关键词失败")
+
+    log_with_user('info', f"更新Cookie关键字(含商品ID): {cid}, 数量: {len(keywords_to_save)}", current_user)
+    return {"msg": "updated", "count": len(keywords_to_save)}
+
+
+@app.get("/items/{cid}")
+def get_items_list(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取指定账号的商品列表"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查cookie是否属于当前用户
+    user_id = current_user['user_id']
+    from db_manager import db_manager
+    user_cookies = db_manager.get_all_cookies(user_id)
+
+    if cid not in user_cookies:
+        raise HTTPException(status_code=403, detail="无权限访问该Cookie")
+
+    try:
+        # 获取该账号的所有商品
+        with db_manager.lock:
+            cursor = db_manager.conn.cursor()
+            cursor.execute('''
+            SELECT item_id, item_title, item_price, created_at
+            FROM item_info
+            WHERE cookie_id = ?
+            ORDER BY created_at DESC
+            ''', (cid,))
+
+            items = []
+            for row in cursor.fetchall():
+                items.append({
+                    'item_id': row[0],
+                    'item_title': row[1] or '未知商品',
+                    'item_price': row[2] or '价格未知',
+                    'created_at': row[3]
+                })
+
+            return {"items": items, "count": len(items)}
+
+    except Exception as e:
+        logger.error(f"获取商品列表失败: {e}")
+        raise HTTPException(status_code=500, detail="获取商品列表失败")
+
+
+@app.get("/keywords-export/{cid}")
+def export_keywords(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """导出指定账号的关键词为Excel文件"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查cookie是否属于当前用户
+    user_id = current_user['user_id']
+    from db_manager import db_manager
+    user_cookies = db_manager.get_all_cookies(user_id)
+
+    if cid not in user_cookies:
+        raise HTTPException(status_code=403, detail="无权限访问该Cookie")
+
+    try:
+        # 获取关键词数据
+        keywords = db_manager.get_keywords_with_item_id(cid)
+
+        # 创建DataFrame
+        data = []
+        for keyword, reply, item_id in keywords:
+            data.append({
+                '关键词': keyword,
+                '商品ID': item_id or '',
+                '关键词内容': reply
+            })
+
+        # 如果没有数据，创建空的DataFrame但保留列名（作为模板）
+        if not data:
+            df = pd.DataFrame(columns=['关键词', '商品ID', '关键词内容'])
+        else:
+            df = pd.DataFrame(data)
+
+        # 创建Excel文件
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='关键词数据', index=False)
+
+            # 如果是空模板，添加一些示例说明
+            if data == []:
+                worksheet = writer.sheets['关键词数据']
+                # 添加示例数据作为注释（从第2行开始）
+                worksheet['A2'] = '你好'
+                worksheet['B2'] = ''
+                worksheet['C2'] = '您好！欢迎咨询，有什么可以帮助您的吗？'
+
+                worksheet['A3'] = '价格'
+                worksheet['B3'] = '123456'
+                worksheet['C3'] = '这个商品的价格是99元，现在有优惠活动哦！'
+
+                worksheet['A4'] = '发货'
+                worksheet['B4'] = ''
+                worksheet['C4'] = '我们会在24小时内发货，请耐心等待。'
+
+                # 设置示例行的样式（浅灰色背景）
+                from openpyxl.styles import PatternFill
+                gray_fill = PatternFill(start_color='F0F0F0', end_color='F0F0F0', fill_type='solid')
+                for row in range(2, 5):
+                    for col in range(1, 4):
+                        worksheet.cell(row=row, column=col).fill = gray_fill
+
+        output.seek(0)
+
+        # 生成文件名（使用URL编码处理中文）
+        from urllib.parse import quote
+        if not data:
+            filename = f"keywords_template_{cid}_{int(time.time())}.xlsx"
+        else:
+            filename = f"keywords_{cid}_{int(time.time())}.xlsx"
+        encoded_filename = quote(filename.encode('utf-8'))
+
+        # 返回文件
+        return StreamingResponse(
+            io.BytesIO(output.read()),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"导出关键词失败: {e}")
+        raise HTTPException(status_code=500, detail=f"导出关键词失败: {str(e)}")
+
+
+@app.post("/keywords-import/{cid}")
+async def import_keywords(cid: str, file: UploadFile = File(...), current_user: Dict[str, Any] = Depends(get_current_user)):
+    """导入Excel文件中的关键词到指定账号"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查cookie是否属于当前用户
+    user_id = current_user['user_id']
+    from db_manager import db_manager
+    user_cookies = db_manager.get_all_cookies(user_id)
+
+    if cid not in user_cookies:
+        raise HTTPException(status_code=403, detail="无权限访问该Cookie")
+
+    # 检查文件类型
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="请上传Excel文件(.xlsx或.xls)")
+
+    try:
+        # 读取Excel文件
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+
+        # 检查必要的列
+        required_columns = ['关键词', '商品ID', '关键词内容']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(status_code=400, detail=f"Excel文件缺少必要的列: {', '.join(missing_columns)}")
+
+        # 获取现有关键词
+        existing_keywords = db_manager.get_keywords_with_item_id(cid)
+        existing_dict = {}
+        for keyword, reply, item_id in existing_keywords:
+            key = f"{keyword}|{item_id or ''}"
+            existing_dict[key] = (keyword, reply, item_id)
+
+        # 处理导入数据
+        import_data = []
+        update_count = 0
+        add_count = 0
+
+        for index, row in df.iterrows():
+            keyword = str(row['关键词']).strip()
+            item_id = str(row['商品ID']).strip() if pd.notna(row['商品ID']) and str(row['商品ID']).strip() else None
+            reply = str(row['关键词内容']).strip()
+
+            if not keyword or not reply:
+                continue  # 跳过空行
+
+            # 检查是否重复
+            key = f"{keyword}|{item_id or ''}"
+            if key in existing_dict:
+                # 更新现有关键词
+                update_count += 1
+            else:
+                # 新增关键词
+                add_count += 1
+
+            import_data.append((keyword, reply, item_id))
+
+        if not import_data:
+            raise HTTPException(status_code=400, detail="Excel文件中没有有效的关键词数据")
+
+        # 保存到数据库
+        success = db_manager.save_keywords_with_item_id(cid, import_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="保存关键词到数据库失败")
+
+        log_with_user('info', f"导入关键词成功: {cid}, 新增: {add_count}, 更新: {update_count}", current_user)
+
+        return {
+            "msg": "导入成功",
+            "total": len(import_data),
+            "added": add_count,
+            "updated": update_count
+        }
+
+    except pd.errors.EmptyDataError:
+        raise HTTPException(status_code=400, detail="Excel文件为空")
+    except pd.errors.ParserError:
+        raise HTTPException(status_code=400, detail="Excel文件格式错误")
+    except Exception as e:
+        logger.error(f"导入关键词失败: {e}")
+        raise HTTPException(status_code=500, detail=f"导入关键词失败: {str(e)}")
 
 
 # 卡券管理API
@@ -1388,6 +1679,7 @@ def create_card(card_data: dict, current_user: Dict[str, Any] = Depends(get_curr
             data_content=card_data.get('data_content'),
             description=card_data.get('description'),
             enabled=card_data.get('enabled', True),
+            delay_seconds=card_data.get('delay_seconds', 0),
             user_id=user_id
         )
 
@@ -1426,7 +1718,8 @@ def update_card(card_id: int, card_data: dict, _: None = Depends(require_auth)):
             text_content=card_data.get('text_content'),
             data_content=card_data.get('data_content'),
             description=card_data.get('description'),
-            enabled=card_data.get('enabled', True)
+            enabled=card_data.get('enabled', True),
+            delay_seconds=card_data.get('delay_seconds')
         )
         if success:
             return {"message": "卡券更新成功"}

@@ -76,6 +76,10 @@ RUN apt-get update && \
 # 设置时区
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
+# 验证Node.js安装并设置环境变量
+RUN node --version && npm --version
+ENV NODE_PATH=/usr/lib/node_modules
+
 # 复制requirements.txt并安装Python依赖
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \

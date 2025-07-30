@@ -752,21 +752,39 @@ class XianyuLive:
             logger.error(f"获取默认回复失败: {self._safe_str(e)}")
             return None
 
-    async def get_keyword_reply(self, send_user_name: str, send_user_id: str, send_message: str) -> str:
-        """获取关键词匹配回复"""
+    async def get_keyword_reply(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str = None) -> str:
+        """获取关键词匹配回复（支持商品ID优先匹配）"""
         try:
             from db_manager import db_manager
 
-            # 获取当前账号的关键词列表
-            keywords = db_manager.get_keywords(self.cookie_id)
+            # 获取当前账号的关键词列表（包含商品ID）
+            keywords = db_manager.get_keywords_with_item_id(self.cookie_id)
 
             if not keywords:
                 logger.debug(f"账号 {self.cookie_id} 没有配置关键词")
                 return None
 
-            # 遍历关键词，查找匹配
-            for keyword, reply in keywords:
-                if keyword.lower() in send_message.lower():
+            # 1. 如果有商品ID，优先匹配该商品ID对应的关键词
+            if item_id:
+                for keyword, reply, keyword_item_id in keywords:
+                    if keyword_item_id == item_id and keyword.lower() in send_message.lower():
+                        # 进行变量替换
+                        try:
+                            formatted_reply = reply.format(
+                                send_user_name=send_user_name,
+                                send_user_id=send_user_id,
+                                send_message=send_message
+                            )
+                            logger.info(f"商品ID关键词匹配成功: 商品{item_id} '{keyword}' -> {formatted_reply}")
+                            return formatted_reply
+                        except Exception as format_error:
+                            logger.error(f"关键词回复变量替换失败: {self._safe_str(format_error)}")
+                            # 如果变量替换失败，返回原始内容
+                            return reply
+
+            # 2. 如果商品ID匹配失败或没有商品ID，匹配没有商品ID的通用关键词
+            for keyword, reply, keyword_item_id in keywords:
+                if not keyword_item_id and keyword.lower() in send_message.lower():
                     # 进行变量替换
                     try:
                         formatted_reply = reply.format(
@@ -774,7 +792,7 @@ class XianyuLive:
                             send_user_id=send_user_id,
                             send_message=send_message
                         )
-                        logger.info(f"关键词匹配成功: '{keyword}' -> {formatted_reply}")
+                        logger.info(f"通用关键词匹配成功: '{keyword}' -> {formatted_reply}")
                         return formatted_reply
                     except Exception as format_error:
                         logger.error(f"关键词回复变量替换失败: {self._safe_str(format_error)}")
@@ -1163,6 +1181,13 @@ class XianyuLive:
             await self.save_item_info_to_db(item_id, search_text)
             rule = delivery_rules[0]
             logger.info(f"找到匹配的发货规则: {rule['keyword']} -> {rule['card_name']} ({rule['card_type']})")
+
+            # 检查是否需要延时发货
+            delay_seconds = rule.get('card_delay_seconds', 0)
+            if delay_seconds and delay_seconds > 0:
+                logger.info(f"检测到延时发货设置: {delay_seconds}秒，开始延时...")
+                await asyncio.sleep(delay_seconds)
+                logger.info(f"延时发货完成，开始发送内容")
 
             delivery_content = None
 
@@ -2099,8 +2124,8 @@ class XianyuLive:
 
             # 如果API回复失败或未启用API，按新的优先级顺序处理
             if not reply:
-                # 1. 首先尝试关键词匹配
-                reply = await self.get_keyword_reply(send_user_name, send_user_id, send_message)
+                # 1. 首先尝试关键词匹配（传入商品ID）
+                reply = await self.get_keyword_reply(send_user_name, send_user_id, send_message, item_id)
                 if reply:
                     reply_source = '关键词'  # 标记为关键词回复
                 else:

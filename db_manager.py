@@ -123,6 +123,7 @@ class DBManager:
                 cookie_id TEXT,
                 keyword TEXT,
                 reply TEXT,
+                item_id TEXT,
                 PRIMARY KEY (cookie_id, keyword),
                 FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE
             )
@@ -195,6 +196,7 @@ class DBManager:
                 data_content TEXT,
                 description TEXT,
                 enabled BOOLEAN DEFAULT TRUE,
+                delay_seconds INTEGER DEFAULT 0,
                 user_id INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -211,6 +213,24 @@ class DBManager:
                 self._execute_sql(cursor, "ALTER TABLE cards ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
                 self._execute_sql(cursor, "CREATE INDEX IF NOT EXISTS idx_cards_user_id ON cards(user_id)")
                 logger.info("cards 表 user_id 列添加完成")
+
+            # 检查并添加 delay_seconds 列（用于自动发货延时功能）
+            try:
+                self._execute_sql(cursor, "SELECT delay_seconds FROM cards LIMIT 1")
+            except sqlite3.OperationalError:
+                # delay_seconds 列不存在，需要添加
+                logger.info("正在为 cards 表添加 delay_seconds 列...")
+                self._execute_sql(cursor, "ALTER TABLE cards ADD COLUMN delay_seconds INTEGER DEFAULT 0")
+                logger.info("cards 表 delay_seconds 列添加完成")
+
+            # 检查并添加 item_id 列（用于自动回复商品ID功能）
+            try:
+                self._execute_sql(cursor, "SELECT item_id FROM keywords LIMIT 1")
+            except sqlite3.OperationalError:
+                # item_id 列不存在，需要添加
+                logger.info("正在为 keywords 表添加 item_id 列...")
+                self._execute_sql(cursor, "ALTER TABLE keywords ADD COLUMN item_id TEXT")
+                logger.info("keywords 表 item_id 列添加完成")
 
             # 创建商品信息表
             cursor.execute('''
@@ -576,7 +596,13 @@ class DBManager:
     
     # -------------------- 关键字操作 --------------------
     def save_keywords(self, cookie_id: str, keywords: List[Tuple[str, str]]) -> bool:
-        """保存关键字列表，先删除旧数据再插入新数据"""
+        """保存关键字列表，先删除旧数据再插入新数据（向后兼容方法）"""
+        # 转换为新格式（不包含item_id）
+        keywords_with_item_id = [(keyword, reply, None) for keyword, reply in keywords]
+        return self.save_keywords_with_item_id(cookie_id, keywords_with_item_id)
+
+    def save_keywords_with_item_id(self, cookie_id: str, keywords: List[Tuple[str, str, str]]) -> bool:
+        """保存关键字列表（包含商品ID），先删除旧数据再插入新数据"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
@@ -585,8 +611,10 @@ class DBManager:
                 self._execute_sql(cursor, "DELETE FROM keywords WHERE cookie_id = ?", (cookie_id,))
 
                 # 插入新关键字
-                for keyword, reply in keywords:
-                    self._execute_sql(cursor, "INSERT INTO keywords (cookie_id, keyword, reply) VALUES (?, ?, ?)", (cookie_id, keyword, reply))
+                for keyword, reply, item_id in keywords:
+                    self._execute_sql(cursor,
+                        "INSERT INTO keywords (cookie_id, keyword, reply, item_id) VALUES (?, ?, ?, ?)",
+                        (cookie_id, keyword, reply, item_id))
 
                 self.conn.commit()
                 logger.info(f"关键字保存成功: {cookie_id}, {len(keywords)}条")
@@ -597,7 +625,7 @@ class DBManager:
                 return False
     
     def get_keywords(self, cookie_id: str) -> List[Tuple[str, str]]:
-        """获取指定Cookie的关键字列表"""
+        """获取指定Cookie的关键字列表（向后兼容方法）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
@@ -606,6 +634,41 @@ class DBManager:
             except Exception as e:
                 logger.error(f"获取关键字失败: {e}")
                 return []
+
+    def get_keywords_with_item_id(self, cookie_id: str) -> List[Tuple[str, str, str]]:
+        """获取指定Cookie的关键字列表（包含商品ID）"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "SELECT keyword, reply, item_id FROM keywords WHERE cookie_id = ?", (cookie_id,))
+                return [(row[0], row[1], row[2]) for row in cursor.fetchall()]
+            except Exception as e:
+                logger.error(f"获取关键字失败: {e}")
+                return []
+
+    def check_keyword_duplicate(self, cookie_id: str, keyword: str, item_id: str = None) -> bool:
+        """检查关键词是否重复"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                if item_id:
+                    # 如果有商品ID，检查相同cookie_id、keyword、item_id的组合
+                    self._execute_sql(cursor,
+                        "SELECT COUNT(*) FROM keywords WHERE cookie_id = ? AND keyword = ? AND item_id = ?",
+                        (cookie_id, keyword, item_id))
+                else:
+                    # 如果没有商品ID，检查相同cookie_id、keyword且item_id为空的组合
+                    self._execute_sql(cursor,
+                        "SELECT COUNT(*) FROM keywords WHERE cookie_id = ? AND keyword = ? AND (item_id IS NULL OR item_id = '')",
+                        (cookie_id, keyword))
+
+                count = cursor.fetchone()[0]
+                return count > 0
+            except Exception as e:
+                logger.error(f"检查关键词重复失败: {e}")
+                return False
+
+
     
     def get_all_keywords(self, user_id: int = None) -> Dict[str, List[Tuple[str, str]]]:
         """获取所有Cookie的关键字（支持用户隔离）"""
@@ -1637,7 +1700,7 @@ class DBManager:
 
     def create_card(self, name: str, card_type: str, api_config=None,
                    text_content: str = None, data_content: str = None,
-                   description: str = None, enabled: bool = True, user_id: int = None):
+                   description: str = None, enabled: bool = True, delay_seconds: int = 0, user_id: int = None):
         """创建新卡券"""
         with self.lock:
             try:
@@ -1653,10 +1716,10 @@ class DBManager:
                 cursor = self.conn.cursor()
                 cursor.execute('''
                 INSERT INTO cards (name, type, api_config, text_content, data_content,
-                                 description, enabled, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                 description, enabled, delay_seconds, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (name, card_type, api_config_str, text_content, data_content,
-                      description, enabled, user_id))
+                      description, enabled, delay_seconds, user_id))
                 self.conn.commit()
                 card_id = cursor.lastrowid
                 logger.info(f"创建卡券成功: {name} (ID: {card_id})")
@@ -1673,7 +1736,7 @@ class DBManager:
                 if user_id is not None:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, created_at, updated_at
+                           description, enabled, delay_seconds, created_at, updated_at
                     FROM cards
                     WHERE user_id = ?
                     ORDER BY created_at DESC
@@ -1681,7 +1744,7 @@ class DBManager:
                 else:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, created_at, updated_at
+                           description, enabled, delay_seconds, created_at, updated_at
                     FROM cards
                     ORDER BY created_at DESC
                     ''')
@@ -1707,8 +1770,9 @@ class DBManager:
                         'data_content': row[5],
                         'description': row[6],
                         'enabled': bool(row[7]),
-                        'created_at': row[8],
-                        'updated_at': row[9]
+                        'delay_seconds': row[8] or 0,
+                        'created_at': row[9],
+                        'updated_at': row[10]
                     })
 
                 return cards
@@ -1724,13 +1788,13 @@ class DBManager:
                 if user_id is not None:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, created_at, updated_at
+                           description, enabled, delay_seconds, created_at, updated_at
                     FROM cards WHERE id = ? AND user_id = ?
                     ''', (card_id, user_id))
                 else:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, created_at, updated_at
+                           description, enabled, delay_seconds, created_at, updated_at
                     FROM cards WHERE id = ?
                     ''', (card_id,))
 
@@ -1755,8 +1819,9 @@ class DBManager:
                         'data_content': row[5],
                         'description': row[6],
                         'enabled': bool(row[7]),
-                        'created_at': row[8],
-                        'updated_at': row[9]
+                        'delay_seconds': row[8] or 0,
+                        'created_at': row[9],
+                        'updated_at': row[10]
                     }
                 return None
             except Exception as e:
@@ -1765,7 +1830,7 @@ class DBManager:
 
     def update_card(self, card_id: int, name: str = None, card_type: str = None,
                    api_config=None, text_content: str = None, data_content: str = None,
-                   description: str = None, enabled: bool = None):
+                   description: str = None, enabled: bool = None, delay_seconds: int = None):
         """更新卡券"""
         with self.lock:
             try:
@@ -1805,6 +1870,9 @@ class DBManager:
                 if enabled is not None:
                     update_fields.append("enabled = ?")
                     params.append(enabled)
+                if delay_seconds is not None:
+                    update_fields.append("delay_seconds = ?")
+                    params.append(delay_seconds)
 
                 if not update_fields:
                     return True  # 没有需要更新的字段
@@ -1903,7 +1971,8 @@ class DBManager:
                 SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
                        dr.description, dr.delivery_times,
                        c.name as card_name, c.type as card_type, c.api_config,
-                       c.text_content, c.data_content, c.enabled as card_enabled, c.description as card_description
+                       c.text_content, c.data_content, c.enabled as card_enabled, c.description as card_description,
+                       c.delay_seconds as card_delay_seconds
                 FROM delivery_rules dr
                 LEFT JOIN cards c ON dr.card_id = c.id
                 WHERE dr.enabled = 1 AND c.enabled = 1
@@ -1942,7 +2011,8 @@ class DBManager:
                         'card_text_content': row[10],
                         'card_data_content': row[11],
                         'card_enabled': bool(row[12]),
-                        'card_description': row[13]  # 卡券备注信息
+                        'card_description': row[13],  # 卡券备注信息
+                        'card_delay_seconds': row[14] or 0  # 延时秒数
                     })
 
                 return rules
