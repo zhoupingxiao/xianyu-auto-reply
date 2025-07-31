@@ -1103,7 +1103,7 @@ class XianyuLive:
             from utils.order_detail_fetcher import fetch_order_detail_simple
 
             # 获取当前账号的cookie字符串
-            cookie_string = self.cookie_value
+            cookie_string = self.cookies_str
             logger.debug(f"【{self.cookie_id}】使用Cookie长度: {len(cookie_string) if cookie_string else 0}")
 
             # 异步获取订单详情（使用当前账号的cookie和无头模式）
@@ -1236,19 +1236,74 @@ class XianyuLive:
 
             logger.info(f"使用搜索文本匹配发货规则: {search_text[:100]}...")
 
-            # 根据商品信息查找匹配的发货规则
-            delivery_rules = db_manager.get_delivery_rules_by_keyword(search_text)
+            # 检查商品是否为多规格商品
+            is_multi_spec = db_manager.get_item_multi_spec_status(self.cookie_id, item_id)
+            spec_name = None
+            spec_value = None
+
+            # 如果是多规格商品且有订单ID，获取规格信息
+            if is_multi_spec and order_id:
+                logger.info(f"检测到多规格商品，获取订单规格信息: {order_id}")
+                try:
+                    order_detail = await self.fetch_order_detail_info(order_id)
+                    if order_detail:
+                        spec_name = order_detail.get('spec_name', '')
+                        spec_value = order_detail.get('spec_value', '')
+                        if spec_name and spec_value:
+                            logger.info(f"获取到规格信息: {spec_name} = {spec_value}")
+                        else:
+                            logger.warning(f"未能获取到规格信息，将使用兜底匹配")
+                    else:
+                        logger.warning(f"获取订单详情失败，将使用兜底匹配")
+                except Exception as e:
+                    logger.error(f"获取订单规格信息失败: {self._safe_str(e)}，将使用兜底匹配")
+
+            # 智能匹配发货规则：优先精确匹配，然后兜底匹配
+            delivery_rules = []
+
+            # 第一步：如果有规格信息，尝试精确匹配多规格发货规则
+            if spec_name and spec_value:
+                logger.info(f"尝试精确匹配多规格发货规则: {search_text[:50]}... [{spec_name}:{spec_value}]")
+                delivery_rules = db_manager.get_delivery_rules_by_keyword_and_spec(search_text, spec_name, spec_value)
+
+                if delivery_rules:
+                    logger.info(f"✅ 找到精确匹配的多规格发货规则: {len(delivery_rules)}个")
+                else:
+                    logger.info(f"❌ 未找到精确匹配的多规格发货规则")
+
+            # 第二步：如果精确匹配失败，尝试兜底匹配（普通发货规则）
+            if not delivery_rules:
+                logger.info(f"尝试兜底匹配普通发货规则: {search_text[:50]}...")
+                delivery_rules = db_manager.get_delivery_rules_by_keyword(search_text)
+
+                if delivery_rules:
+                    logger.info(f"✅ 找到兜底匹配的普通发货规则: {len(delivery_rules)}个")
+                else:
+                    logger.info(f"❌ 未找到任何匹配的发货规则")
 
             if not delivery_rules:
-                logger.info(f"未找到匹配的发货规则: {search_text[:50]}...")
+                logger.warning(f"未找到匹配的发货规则: {search_text[:50]}...")
                 return None
 
             # 使用第一个匹配的规则（按关键字长度降序排列，优先匹配更精确的规则）
-            
+            rule = delivery_rules[0]
+
             # 保存商品信息到数据库
             await self.save_item_info_to_db(item_id, search_text)
-            rule = delivery_rules[0]
-            logger.info(f"找到匹配的发货规则: {rule['keyword']} -> {rule['card_name']} ({rule['card_type']})")
+
+            # 详细的匹配结果日志
+            if rule.get('is_multi_spec'):
+                if spec_name and spec_value:
+                    logger.info(f"🎯 精确匹配多规格发货规则: {rule['keyword']} -> {rule['card_name']} [{rule['spec_name']}:{rule['spec_value']}]")
+                    logger.info(f"📋 订单规格: {spec_name}:{spec_value} ✅ 匹配卡券规格: {rule['spec_name']}:{rule['spec_value']}")
+                else:
+                    logger.info(f"⚠️ 使用多规格发货规则但无订单规格信息: {rule['keyword']} -> {rule['card_name']} [{rule['spec_name']}:{rule['spec_value']}]")
+            else:
+                if spec_name and spec_value:
+                    logger.info(f"🔄 兜底匹配普通发货规则: {rule['keyword']} -> {rule['card_name']} ({rule['card_type']})")
+                    logger.info(f"📋 订单规格: {spec_name}:{spec_value} ➡️ 使用普通卡券兜底")
+                else:
+                    logger.info(f"✅ 匹配普通发货规则: {rule['keyword']} -> {rule['card_name']} ({rule['card_type']})")
 
             # 获取延时设置
             delay_seconds = rule.get('card_delay_seconds', 0)
@@ -1297,7 +1352,7 @@ class XianyuLive:
 
             elif rule['card_type'] == 'text':
                 # 固定文字类型：直接使用文字内容
-                delivery_content = rule['card_text_content']
+                delivery_content = rule['text_content']
 
             elif rule['card_type'] == 'data':
                 # 批量数据类型：获取并消费第一条数据
@@ -1351,10 +1406,12 @@ class XianyuLive:
 
         try:
             import aiohttp
+            import json
 
-            api_config = rule.get('card_api_config')
+            api_config = rule.get('api_config')
             if not api_config:
-                logger.error("API配置为空")
+                logger.error(f"API配置为空，规则ID: {rule.get('id')}, 卡券名称: {rule.get('card_name')}")
+                logger.debug(f"规则详情: {rule}")
                 return None
 
             # 解析API配置

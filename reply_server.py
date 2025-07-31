@@ -1737,6 +1737,12 @@ def create_card(card_data: dict, current_user: Dict[str, Any] = Depends(get_curr
 
         log_with_user('info', f"创建卡券: {card_name}", current_user)
 
+        # 验证多规格字段
+        is_multi_spec = card_data.get('is_multi_spec', False)
+        if is_multi_spec:
+            if not card_data.get('spec_name') or not card_data.get('spec_value'):
+                raise HTTPException(status_code=400, detail="多规格卡券必须提供规格名称和规格值")
+
         card_id = db_manager.create_card(
             name=card_data.get('name'),
             card_type=card_data.get('type'),
@@ -1746,6 +1752,9 @@ def create_card(card_data: dict, current_user: Dict[str, Any] = Depends(get_curr
             description=card_data.get('description'),
             enabled=card_data.get('enabled', True),
             delay_seconds=card_data.get('delay_seconds', 0),
+            is_multi_spec=is_multi_spec,
+            spec_name=card_data.get('spec_name') if is_multi_spec else None,
+            spec_value=card_data.get('spec_value') if is_multi_spec else None,
             user_id=user_id
         )
 
@@ -1776,6 +1785,12 @@ def update_card(card_id: int, card_data: dict, _: None = Depends(require_auth)):
     """更新卡券"""
     try:
         from db_manager import db_manager
+        # 验证多规格字段
+        is_multi_spec = card_data.get('is_multi_spec')
+        if is_multi_spec:
+            if not card_data.get('spec_name') or not card_data.get('spec_value'):
+                raise HTTPException(status_code=400, detail="多规格卡券必须提供规格名称和规格值")
+
         success = db_manager.update_card(
             card_id=card_id,
             name=card_data.get('name'),
@@ -1785,7 +1800,10 @@ def update_card(card_id: int, card_data: dict, _: None = Depends(require_auth)):
             data_content=card_data.get('data_content'),
             description=card_data.get('description'),
             enabled=card_data.get('enabled', True),
-            delay_seconds=card_data.get('delay_seconds')
+            delay_seconds=card_data.get('delay_seconds'),
+            is_multi_spec=is_multi_spec,
+            spec_name=card_data.get('spec_name'),
+            spec_value=card_data.get('spec_value')
         )
         if success:
             return {"message": "卡券更新成功"}
@@ -3036,6 +3054,26 @@ def clear_table_data(table_name: str, admin_user: Dict[str, Any] = Depends(requi
         raise
     except Exception as e:
         log_with_user('error', f"清空表数据异常: {table_name} - {str(e)}", admin_user)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# 商品多规格管理API
+@app.put("/items/{cookie_id}/{item_id}/multi-spec")
+def update_item_multi_spec(cookie_id: str, item_id: str, spec_data: dict, _: None = Depends(require_auth)):
+    """更新商品的多规格状态"""
+    try:
+        from db_manager import db_manager
+
+        is_multi_spec = spec_data.get('is_multi_spec', False)
+
+        success = db_manager.update_item_multi_spec_status(cookie_id, item_id, is_multi_spec)
+
+        if success:
+            return {"message": f"商品多规格状态已{'开启' if is_multi_spec else '关闭'}"}
+        else:
+            raise HTTPException(status_code=404, detail="商品不存在")
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 

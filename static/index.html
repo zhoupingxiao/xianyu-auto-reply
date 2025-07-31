@@ -1419,12 +1419,13 @@
                     <th style="width: 5%">
                       <input type="checkbox" id="selectAllItems" onchange="toggleSelectAll(this)">
                     </th>
-                    <th style="width: 15%">账号ID</th>
-                    <th style="width: 15%">商品ID</th>
-                    <th style="width: 20%">商品标题</th>
-                    <th style="width: 25%">商品详情</th>
-                    <th style="width: 12%">更新时间</th>
-                    <th style="width: 8%">操作</th>
+                    <th style="width: 12%">账号ID</th>
+                    <th style="width: 12%">商品ID</th>
+                    <th style="width: 18%">商品标题</th>
+                    <th style="width: 20%">商品详情</th>
+                    <th style="width: 8%">多规格</th>
+                    <th style="width: 10%">更新时间</th>
+                    <th style="width: 15%">操作</th>
                   </tr>
                 </thead>
                 <tbody id="itemsTableBody">
@@ -1567,6 +1568,7 @@
                       <tr>
                         <th>卡券名称</th>
                         <th>类型</th>
+                        <th>规格信息</th>
                         <th>数据量</th>
                         <th>延时时间</th>
                         <th>状态</th>
@@ -2157,7 +2159,7 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <form id="addCardForm">
+          <form id="addCardForm" onsubmit="event.preventDefault(); saveCard(); return false;">
             <div class="mb-3">
               <label class="form-label">卡券名称 <span class="text-danger">*</span></label>
               <input type="text" class="form-control" id="cardName" placeholder="例如：游戏点卡、会员卡等" required>
@@ -2252,6 +2254,46 @@
                 <i class="bi bi-info-circle me-1"></i>
                 备注内容会与发货内容一起发送。使用 <code>{DELIVERY_CONTENT}</code> 变量可以在备注中插入实际的发货内容。
               </small>
+            </div>
+
+            <!-- 多规格设置 -->
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="isMultiSpec" onchange="toggleMultiSpecFields()">
+                <label class="form-check-label" for="isMultiSpec">
+                  <strong>多规格卡券</strong>
+                </label>
+              </div>
+              <div class="form-text">开启后可以为同一商品的不同规格创建不同的卡券</div>
+            </div>
+
+            <!-- 多规格字段 -->
+            <div id="multiSpecFields" style="display: none;">
+              <div class="row">
+                <div class="col-md-6">
+                  <div class="mb-3">
+                    <label class="form-label">规格名称 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="specName" placeholder="例如：套餐类型、颜色、尺寸">
+                    <div class="form-text">规格的名称，如套餐类型、颜色等</div>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="mb-3">
+                    <label class="form-label">规格值 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="specValue" placeholder="例如：30天、红色、XL">
+                    <div class="form-text">具体的规格值，如30天、红色等</div>
+                  </div>
+                </div>
+              </div>
+              <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                <strong>多规格说明：</strong>
+                <ul class="mb-0 mt-2">
+                  <li>同一卡券名称可以创建多个不同规格的卡券</li>
+                  <li>卡券名称+规格名称+规格值必须唯一</li>
+                  <li>自动发货时会优先匹配精确规格，找不到时使用普通卡券兜底</li>
+                </ul>
+              </div>
             </div>
           </form>
         </div>
@@ -2379,6 +2421,46 @@
                 <i class="bi bi-info-circle me-1"></i>
                 备注内容会与发货内容一起发送。使用 <code>{DELIVERY_CONTENT}</code> 变量可以在备注中插入实际的发货内容。
               </small>
+            </div>
+
+            <!-- 多规格设置 -->
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="editIsMultiSpec" onchange="toggleEditMultiSpecFields()">
+                <label class="form-check-label" for="editIsMultiSpec">
+                  <strong>多规格卡券</strong>
+                </label>
+              </div>
+              <div class="form-text">开启后可以为同一商品的不同规格创建不同的卡券</div>
+            </div>
+
+            <!-- 多规格字段 -->
+            <div id="editMultiSpecFields" style="display: none;">
+              <div class="row">
+                <div class="col-md-6">
+                  <div class="mb-3">
+                    <label class="form-label">规格名称 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="editSpecName" placeholder="例如：套餐类型、颜色、尺寸">
+                    <div class="form-text">规格的名称，如套餐类型、颜色等</div>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="mb-3">
+                    <label class="form-label">规格值 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="editSpecValue" placeholder="例如：30天、红色、XL">
+                    <div class="form-text">具体的规格值，如30天、红色等</div>
+                  </div>
+                </div>
+              </div>
+              <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                <strong>多规格说明：</strong>
+                <ul class="mb-0 mt-2">
+                  <li>同一卡券名称可以创建多个不同规格的卡券</li>
+                  <li>卡券名称+规格名称+规格值必须唯一</li>
+                  <li>自动发货时会优先匹配精确规格，找不到时使用普通卡券兜底</li>
+                </ul>
+              </div>
             </div>
           </form>
         </div>
@@ -5021,7 +5103,7 @@
       if (cards.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="7" class="text-center py-4 text-muted">
+            <td colspan="8" class="text-center py-4 text-muted">
               <i class="bi bi-credit-card fs-1 d-block mb-3"></i>
               <h5>暂无卡券数据</h5>
               <p class="mb-0">点击"添加卡券"开始创建您的第一个卡券</p>
@@ -5071,12 +5153,19 @@
           `${card.delay_seconds}秒` :
           '<span class="text-muted">立即</span>';
 
+        // 规格信息显示
+        let specDisplay = '<span class="text-muted">普通卡券</span>';
+        if (card.is_multi_spec && card.spec_name && card.spec_value) {
+          specDisplay = `<span class="badge bg-primary">${card.spec_name}: ${card.spec_value}</span>`;
+        }
+
         tr.innerHTML = `
           <td>
             <div class="fw-bold">${card.name}</div>
             ${card.description ? `<small class="text-muted">${card.description}</small>` : ''}
           </td>
           <td>${typeBadge}</td>
+          <td>${specDisplay}</td>
           <td>${dataCount}</td>
           <td>${delayDisplay}</td>
           <td>${statusBadge}</td>
@@ -5132,6 +5221,93 @@
       document.getElementById('dataFields').style.display = cardType === 'data' ? 'block' : 'none';
     }
 
+    // 切换多规格字段显示
+    function toggleMultiSpecFields() {
+      const isMultiSpec = document.getElementById('isMultiSpec').checked;
+      document.getElementById('multiSpecFields').style.display = isMultiSpec ? 'block' : 'none';
+    }
+
+    // 切换编辑多规格字段显示
+    function toggleEditMultiSpecFields() {
+      const checkbox = document.getElementById('editIsMultiSpec');
+      const fieldsDiv = document.getElementById('editMultiSpecFields');
+
+      if (!checkbox) {
+        console.error('编辑多规格开关元素未找到');
+        return;
+      }
+
+      if (!fieldsDiv) {
+        console.error('编辑多规格字段容器未找到');
+        return;
+      }
+
+      const isMultiSpec = checkbox.checked;
+      const displayStyle = isMultiSpec ? 'block' : 'none';
+
+      console.log('toggleEditMultiSpecFields - 多规格状态:', isMultiSpec);
+      console.log('toggleEditMultiSpecFields - 设置显示样式:', displayStyle);
+
+      fieldsDiv.style.display = displayStyle;
+
+      // 验证设置是否生效
+      console.log('toggleEditMultiSpecFields - 实际显示样式:', fieldsDiv.style.display);
+    }
+
+    // 清空添加卡券表单
+    function clearAddCardForm() {
+      try {
+        // 安全地清空表单字段
+        const setElementValue = (id, value) => {
+          const element = document.getElementById(id);
+          if (element) {
+            if (element.type === 'checkbox') {
+              element.checked = value;
+            } else {
+              element.value = value;
+            }
+          } else {
+            console.warn(`Element with id '${id}' not found`);
+          }
+        };
+
+        const setElementDisplay = (id, display) => {
+          const element = document.getElementById(id);
+          if (element) {
+            element.style.display = display;
+          } else {
+            console.warn(`Element with id '${id}' not found`);
+          }
+        };
+
+        // 清空基本字段
+        setElementValue('cardName', '');
+        setElementValue('cardType', 'text');
+        setElementValue('cardDescription', '');
+        setElementValue('cardDelaySeconds', '0');
+        setElementValue('isMultiSpec', false);
+        setElementValue('specName', '');
+        setElementValue('specValue', '');
+
+        // 隐藏多规格字段
+        setElementDisplay('multiSpecFields', 'none');
+
+        // 清空类型相关字段
+        setElementValue('textContent', '');
+        setElementValue('dataContent', '');
+        setElementValue('apiUrl', '');
+        setElementValue('apiMethod', 'GET');
+        setElementValue('apiHeaders', '');
+        setElementValue('apiParams', '');
+        setElementValue('apiTimeout', '10');
+
+        // 重置字段显示
+        toggleCardTypeFields();
+      } catch (error) {
+        console.error('清空表单时出错:', error);
+      }
+    }
+
     // 保存卡券
     async function saveCard() {
       try {
@@ -5143,12 +5319,26 @@
           return;
         }
 
+        // 检查多规格设置
+        const isMultiSpec = document.getElementById('isMultiSpec').checked;
+        const specName = document.getElementById('specName').value;
+        const specValue = document.getElementById('specValue').value;
+
+        // 验证多规格字段
+        if (isMultiSpec && (!specName || !specValue)) {
+          showToast('多规格卡券必须填写规格名称和规格值', 'warning');
+          return;
+        }
+
         const cardData = {
           name: cardName,
           type: cardType,
           description: document.getElementById('cardDescription').value,
           delay_seconds: parseInt(document.getElementById('cardDelaySeconds').value) || 0,
-          enabled: true
+          enabled: true,
+          is_multi_spec: isMultiSpec,
+          spec_name: isMultiSpec ? specName : null,
+          spec_value: isMultiSpec ? specValue : null
         };
 
         // 根据类型添加特定配置
@@ -5208,14 +5398,28 @@
         if (response.ok) {
           showToast('卡券保存成功', 'success');
           bootstrap.Modal.getInstance(document.getElementById('addCardModal')).hide();
+          // 清空表单
+          clearAddCardForm();
           loadCards();
         } else {
-          const error = await response.text();
-          showToast(`保存失败: ${error}`, 'danger');
+          let errorMessage = '保存失败';
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorData.detail || errorMessage;
+          } catch (e) {
+            // 如果不是JSON格式，尝试获取文本
+            try {
+              const errorText = await response.text();
+              errorMessage = errorText || errorMessage;
+            } catch (e2) {
+              errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+            }
+          }
+          showToast(`保存失败: ${errorMessage}`, 'danger');
         }
       } catch (error) {
         console.error('保存卡券失败:', error);
-        showToast('保存卡券失败', 'danger');
+        showToast(`网络错误: ${error.message}`, 'danger');
       }
     }
     // ==================== 自动发货功能 ====================
@@ -5294,7 +5498,12 @@
             ${rule.description ? `<small class="text-muted">${rule.description}</small>` : ''}
           </td>
           <td>
-            <span class="badge bg-primary">${rule.card_name || '未知卡券'}</span>
+            <div>
+              <span class="badge bg-primary">${rule.card_name || '未知卡券'}</span>
+              ${rule.is_multi_spec && rule.spec_name && rule.spec_value ?
+                `<br><small class="text-muted mt-1 d-block"><i class="bi bi-tags"></i> ${rule.spec_name}: ${rule.spec_value}</small>` :
+                ''}
+            </div>
           </td>
           <td>${cardTypeBadge}</td>
           <td>
@@ -5364,7 +5573,20 @@
             if (card.enabled) { // 只显示启用的卡券
               const option = document.createElement('option');
               option.value = card.id;
-              option.textContent = `${card.name} (${card.type === 'api' ? 'API' : card.type === 'text' ? '固定文字' : '批量数据'})`;
+
+              // 构建显示文本
+              let displayText = card.name;
+
+              // 添加类型信息
+              const typeText = card.type === 'api' ? 'API' : card.type === 'text' ? '固定文字' : '批量数据';
+              displayText += ` (${typeText})`;
+
+              // 添加规格信息
+              if (card.is_multi_spec && card.spec_name && card.spec_value) {
+                displayText += ` [${card.spec_name}:${card.spec_value}]`;
+              }
+
+              option.textContent = displayText;
               select.appendChild(option);
             }
           });
@@ -5440,6 +5662,17 @@
           document.getElementById('editCardDelaySeconds').value = card.delay_seconds || 0;
           document.getElementById('editCardEnabled').checked = card.enabled;
 
+          // 填充多规格字段
+          const isMultiSpec = card.is_multi_spec || false;
+          document.getElementById('editIsMultiSpec').checked = isMultiSpec;
+          document.getElementById('editSpecName').value = card.spec_name || '';
+          document.getElementById('editSpecValue').value = card.spec_value || '';
+
+          // 添加调试日志
+          console.log('编辑卡券 - 多规格状态:', isMultiSpec);
+          console.log('编辑卡券 - 规格名称:', card.spec_name);
+          console.log('编辑卡券 - 规格值:', card.spec_value);
+
           // 根据类型填充特定字段
           if (card.type === 'api' && card.api_config) {
             document.getElementById('editApiUrl').value = card.api_config.url || '';
@@ -5455,6 +5688,19 @@
 
           // 显示对应的字段
           toggleEditCardTypeFields();
+
+          // 使用延迟调用确保DOM更新完成后再显示多规格字段
+          setTimeout(() => {
+            console.log('延迟调用 toggleEditMultiSpecFields');
+            toggleEditMultiSpecFields();
+
+            // 验证多规格字段是否正确显示
+            const multiSpecElement = document.getElementById('editMultiSpecFields');
+            const isChecked = document.getElementById('editIsMultiSpec').checked;
+            console.log('多规格元素存在:', !!multiSpecElement);
+            console.log('多规格开关状态:', isChecked);
+            console.log('多规格字段显示状态:', multiSpecElement ? multiSpecElement.style.display : 'element not found');
+          }, 100);
 
           // 显示模态框
           const modal = new bootstrap.Modal(document.getElementById('editCardModal'));
@@ -5489,12 +5735,26 @@
           return;
         }
 
+        // 检查多规格设置
+        const isMultiSpec = document.getElementById('editIsMultiSpec').checked;
+        const specName = document.getElementById('editSpecName').value;
+        const specValue = document.getElementById('editSpecValue').value;
+
+        // 验证多规格字段
+        if (isMultiSpec && (!specName || !specValue)) {
+          showToast('多规格卡券必须填写规格名称和规格值', 'warning');
+          return;
+        }
+
         const cardData = {
           name: cardName,
           type: cardType,
           description: document.getElementById('editCardDescription').value,
           delay_seconds: parseInt(document.getElementById('editCardDelaySeconds').value) || 0,
-          enabled: document.getElementById('editCardEnabled').checked
+          enabled: document.getElementById('editCardEnabled').checked,
+          is_multi_spec: isMultiSpec,
+          spec_name: isMultiSpec ? specName : null,
+          spec_value: isMultiSpec ? specValue : null
         };
 
         // 根据类型添加特定配置
@@ -5651,7 +5911,20 @@
             if (card.enabled) { // 只显示启用的卡券
               const option = document.createElement('option');
               option.value = card.id;
-              option.textContent = `${card.name} (${card.type === 'api' ? 'API' : card.type === 'text' ? '固定文字' : '批量数据'})`;
+
+              // 构建显示文本
+              let displayText = card.name;
+
+              // 添加类型信息
+              const typeText = card.type === 'api' ? 'API' : card.type === 'text' ? '固定文字' : '批量数据';
+              displayText += ` (${typeText})`;
+
+              // 添加规格信息
+              if (card.is_multi_spec && card.spec_name && card.spec_value) {
+                displayText += ` [${card.spec_name}:${card.spec_value}]`;
+              }
+
+              option.textContent = displayText;
               select.appendChild(option);
             }
           });
@@ -6316,6 +6589,34 @@
 
     // ==================== 商品管理功能 ====================
 
+    // 切换商品多规格状态
+    async function toggleItemMultiSpec(cookieId, itemId, isMultiSpec) {
+      try {
+        const response = await fetch(`${apiBase}/items/${encodeURIComponent(cookieId)}/${encodeURIComponent(itemId)}/multi-spec`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            is_multi_spec: isMultiSpec
+          })
+        });
+
+        if (response.ok) {
+          showToast(`${isMultiSpec ? '开启' : '关闭'}多规格成功`, 'success');
+          // 刷新商品列表
+          await refreshItemsData();
+        } else {
+          const errorData = await response.json();
+          throw new Error(errorData.error || '操作失败');
+        }
+      } catch (error) {
+        console.error('切换多规格状态失败:', error);
+        showToast(`切换多规格状态失败: ${error.message}`, 'danger');
+      }
+    }
+
     // 加载商品列表
     async function loadItems() {
       try {
@@ -6475,7 +6776,7 @@
       const tbody = document.getElementById('itemsTableBody');
 
       if (!items || items.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">暂无商品数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无商品数据</td></tr>';
         // 重置选择状态
         const selectAllCheckbox = document.getElementById('selectAllItems');
         if (selectAllCheckbox) {
@@ -6511,6 +6812,12 @@
           }
         }
 
+        // 多规格状态显示
+        const isMultiSpec = item.is_multi_spec;
+        const multiSpecDisplay = isMultiSpec ?
+          '<span class="badge bg-success">多规格</span>' :
+          '<span class="badge bg-secondary">普通</span>';
+
         return `
           <tr>
             <td>
@@ -6523,6 +6830,7 @@
             <td>${escapeHtml(item.item_id)}</td>
             <td title="${escapeHtml(item.item_title || '未设置')}">${escapeHtml(itemTitleDisplay)}</td>
             <td title="${escapeHtml(item.item_detail || '未设置')}">${escapeHtml(itemDetailDisplay)}</td>
+            <td>${multiSpecDisplay}</td>
             <td>${formatDateTime(item.updated_at)}</td>
             <td>
               <div class="btn-group" role="group">
@@ -6531,6 +6839,9 @@
                 </button>
                 <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', '${escapeHtml(item.item_title || item.item_id)}')" title="删除">
                   <i class="bi bi-trash"></i>
+                </button>
+                <button class="btn btn-sm ${isMultiSpec ? 'btn-warning' : 'btn-success'}" onclick="toggleItemMultiSpec('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', ${!isMultiSpec})" title="${isMultiSpec ? '关闭多规格' : '开启多规格'}">
+                  <i class="bi ${isMultiSpec ? 'bi-toggle-on' : 'bi-toggle-off'}"></i>
                 </button>
               </div>
             </td>

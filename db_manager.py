@@ -198,6 +198,9 @@ class DBManager:
                 description TEXT,
                 enabled BOOLEAN DEFAULT TRUE,
                 delay_seconds INTEGER DEFAULT 0,
+                is_multi_spec BOOLEAN DEFAULT FALSE,
+                spec_name TEXT,
+                spec_value TEXT,
                 user_id INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -244,6 +247,7 @@ class DBManager:
                 item_category TEXT,
                 item_price TEXT,
                 item_detail TEXT,
+                is_multi_spec BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE,
@@ -411,6 +415,24 @@ class DBManager:
                 else:
                     # type列存在，更新NULL值
                     self._execute_sql(cursor, "UPDATE email_verifications SET type = 'register' WHERE type IS NULL")
+
+                # 为cards表添加多规格字段（如果不存在）
+                try:
+                    self._execute_sql(cursor, "SELECT is_multi_spec FROM cards LIMIT 1")
+                except sqlite3.OperationalError:
+                    # 多规格字段不存在，需要添加
+                    self._execute_sql(cursor, "ALTER TABLE cards ADD COLUMN is_multi_spec BOOLEAN DEFAULT FALSE")
+                    self._execute_sql(cursor, "ALTER TABLE cards ADD COLUMN spec_name TEXT")
+                    self._execute_sql(cursor, "ALTER TABLE cards ADD COLUMN spec_value TEXT")
+                    logger.info("为cards表添加多规格字段")
+
+                # 为item_info表添加多规格字段（如果不存在）
+                try:
+                    self._execute_sql(cursor, "SELECT is_multi_spec FROM item_info LIMIT 1")
+                except sqlite3.OperationalError:
+                    # 多规格字段不存在，需要添加
+                    self._execute_sql(cursor, "ALTER TABLE item_info ADD COLUMN is_multi_spec BOOLEAN DEFAULT FALSE")
+                    logger.info("为item_info表添加多规格字段")
 
             self.conn.commit()
             logger.info(f"数据库初始化成功: {self.db_path}")
@@ -1740,10 +1762,37 @@ class DBManager:
 
     def create_card(self, name: str, card_type: str, api_config=None,
                    text_content: str = None, data_content: str = None,
-                   description: str = None, enabled: bool = True, delay_seconds: int = 0, user_id: int = None):
-        """创建新卡券"""
+                   description: str = None, enabled: bool = True, delay_seconds: int = 0,
+                   is_multi_spec: bool = False, spec_name: str = None, spec_value: str = None,
+                   user_id: int = None):
+        """创建新卡券（支持多规格）"""
         with self.lock:
             try:
+                # 验证多规格参数
+                if is_multi_spec:
+                    if not spec_name or not spec_value:
+                        raise ValueError("多规格卡券必须提供规格名称和规格值")
+
+                    # 检查唯一性：卡券名称+规格名称+规格值
+                    cursor = self.conn.cursor()
+                    cursor.execute('''
+                    SELECT COUNT(*) FROM cards
+                    WHERE name = ? AND spec_name = ? AND spec_value = ? AND user_id = ?
+                    ''', (name, spec_name, spec_value, user_id))
+
+                    if cursor.fetchone()[0] > 0:
+                        raise ValueError(f"卡券已存在：{name} - {spec_name}:{spec_value}")
+                else:
+                    # 检查唯一性：仅卡券名称
+                    cursor = self.conn.cursor()
+                    cursor.execute('''
+                    SELECT COUNT(*) FROM cards
+                    WHERE name = ? AND (is_multi_spec = 0 OR is_multi_spec IS NULL) AND user_id = ?
+                    ''', (name, user_id))
+
+                    if cursor.fetchone()[0] > 0:
+                        raise ValueError(f"卡券名称已存在：{name}")
+
                 # 处理api_config参数 - 如果是字典则转换为JSON字符串
                 api_config_str = None
                 if api_config is not None:
@@ -1753,16 +1802,21 @@ class DBManager:
                     else:
                         api_config_str = str(api_config)
 
-                cursor = self.conn.cursor()
                 cursor.execute('''
                 INSERT INTO cards (name, type, api_config, text_content, data_content,
-                                 description, enabled, delay_seconds, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 description, enabled, delay_seconds, is_multi_spec,
+                                 spec_name, spec_value, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (name, card_type, api_config_str, text_content, data_content,
-                      description, enabled, delay_seconds, user_id))
+                      description, enabled, delay_seconds, is_multi_spec,
+                      spec_name, spec_value, user_id))
                 self.conn.commit()
                 card_id = cursor.lastrowid
-                logger.info(f"创建卡券成功: {name} (ID: {card_id})")
+
+                if is_multi_spec:
+                    logger.info(f"创建多规格卡券成功: {name} - {spec_name}:{spec_value} (ID: {card_id})")
+                else:
+                    logger.info(f"创建卡券成功: {name} (ID: {card_id})")
                 return card_id
             except Exception as e:
                 logger.error(f"创建卡券失败: {e}")
@@ -1776,7 +1830,8 @@ class DBManager:
                 if user_id is not None:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, delay_seconds, created_at, updated_at
+                           description, enabled, delay_seconds, is_multi_spec,
+                           spec_name, spec_value, created_at, updated_at
                     FROM cards
                     WHERE user_id = ?
                     ORDER BY created_at DESC
@@ -1784,7 +1839,8 @@ class DBManager:
                 else:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, delay_seconds, created_at, updated_at
+                           description, enabled, delay_seconds, is_multi_spec,
+                           spec_name, spec_value, created_at, updated_at
                     FROM cards
                     ORDER BY created_at DESC
                     ''')
@@ -1811,8 +1867,11 @@ class DBManager:
                         'description': row[6],
                         'enabled': bool(row[7]),
                         'delay_seconds': row[8] or 0,
-                        'created_at': row[9],
-                        'updated_at': row[10]
+                        'is_multi_spec': bool(row[9]) if row[9] is not None else False,
+                        'spec_name': row[10],
+                        'spec_value': row[11],
+                        'created_at': row[12],
+                        'updated_at': row[13]
                     })
 
                 return cards
@@ -1828,13 +1887,15 @@ class DBManager:
                 if user_id is not None:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, delay_seconds, created_at, updated_at
+                           description, enabled, delay_seconds, is_multi_spec,
+                           spec_name, spec_value, created_at, updated_at
                     FROM cards WHERE id = ? AND user_id = ?
                     ''', (card_id, user_id))
                 else:
                     cursor.execute('''
                     SELECT id, name, type, api_config, text_content, data_content,
-                           description, enabled, delay_seconds, created_at, updated_at
+                           description, enabled, delay_seconds, is_multi_spec,
+                           spec_name, spec_value, created_at, updated_at
                     FROM cards WHERE id = ?
                     ''', (card_id,))
 
@@ -1860,8 +1921,11 @@ class DBManager:
                         'description': row[6],
                         'enabled': bool(row[7]),
                         'delay_seconds': row[8] or 0,
-                        'created_at': row[9],
-                        'updated_at': row[10]
+                        'is_multi_spec': bool(row[9]) if row[9] is not None else False,
+                        'spec_name': row[10],
+                        'spec_value': row[11],
+                        'created_at': row[12],
+                        'updated_at': row[13]
                     }
                 return None
             except Exception as e:
@@ -1870,7 +1934,8 @@ class DBManager:
 
     def update_card(self, card_id: int, name: str = None, card_type: str = None,
                    api_config=None, text_content: str = None, data_content: str = None,
-                   description: str = None, enabled: bool = None, delay_seconds: int = None):
+                   description: str = None, enabled: bool = None, delay_seconds: int = None,
+                   is_multi_spec: bool = None, spec_name: str = None, spec_value: str = None):
         """更新卡券"""
         with self.lock:
             try:
@@ -1913,6 +1978,15 @@ class DBManager:
                 if delay_seconds is not None:
                     update_fields.append("delay_seconds = ?")
                     params.append(delay_seconds)
+                if is_multi_spec is not None:
+                    update_fields.append("is_multi_spec = ?")
+                    params.append(is_multi_spec)
+                if spec_name is not None:
+                    update_fields.append("spec_name = ?")
+                    params.append(spec_name)
+                if spec_value is not None:
+                    update_fields.append("spec_value = ?")
+                    params.append(spec_value)
 
                 if not update_fields:
                     return True  # 没有需要更新的字段
@@ -1964,7 +2038,8 @@ class DBManager:
                     cursor.execute('''
                     SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
                            dr.description, dr.delivery_times, dr.created_at, dr.updated_at,
-                           c.name as card_name, c.type as card_type
+                           c.name as card_name, c.type as card_type,
+                           c.is_multi_spec, c.spec_name, c.spec_value
                     FROM delivery_rules dr
                     LEFT JOIN cards c ON dr.card_id = c.id
                     WHERE dr.user_id = ?
@@ -1974,7 +2049,8 @@ class DBManager:
                     cursor.execute('''
                     SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
                            dr.description, dr.delivery_times, dr.created_at, dr.updated_at,
-                           c.name as card_name, c.type as card_type
+                           c.name as card_name, c.type as card_type,
+                           c.is_multi_spec, c.spec_name, c.spec_value
                     FROM delivery_rules dr
                     LEFT JOIN cards c ON dr.card_id = c.id
                     ORDER BY dr.created_at DESC
@@ -1993,7 +2069,10 @@ class DBManager:
                         'created_at': row[7],
                         'updated_at': row[8],
                         'card_name': row[9],
-                        'card_type': row[10]
+                        'card_type': row[10],
+                        'is_multi_spec': bool(row[11]) if row[11] is not None else False,
+                        'spec_name': row[12],
+                        'spec_value': row[13]
                     })
 
                 return rules
@@ -2047,9 +2126,9 @@ class DBManager:
                         'delivery_times': row[6],
                         'card_name': row[7],
                         'card_type': row[8],
-                        'card_api_config': api_config,
-                        'card_text_content': row[10],
-                        'card_data_content': row[11],
+                        'api_config': api_config,  # 修复字段名
+                        'text_content': row[10],
+                        'data_content': row[11],
                         'card_enabled': bool(row[12]),
                         'card_description': row[13],  # 卡券备注信息
                         'card_delay_seconds': row[14] or 0  # 延时秒数
@@ -2172,6 +2251,136 @@ class DBManager:
                 logger.debug(f"发货规则 {rule_id} 发货次数已增加")
             except Exception as e:
                 logger.error(f"更新发货次数失败: {e}")
+
+    def get_delivery_rules_by_keyword_and_spec(self, keyword: str, spec_name: str = None, spec_value: str = None):
+        """根据关键字和规格信息获取匹配的发货规则（支持多规格）"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 优先匹配：卡券名称+规格名称+规格值
+                if spec_name and spec_value:
+                    cursor.execute('''
+                    SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
+                           dr.description, dr.delivery_times,
+                           c.name as card_name, c.type as card_type, c.api_config,
+                           c.text_content, c.data_content, c.enabled as card_enabled,
+                           c.description as card_description, c.delay_seconds as card_delay_seconds,
+                           c.is_multi_spec, c.spec_name, c.spec_value
+                    FROM delivery_rules dr
+                    LEFT JOIN cards c ON dr.card_id = c.id
+                    WHERE dr.enabled = 1 AND c.enabled = 1
+                    AND (? LIKE '%' || dr.keyword || '%' OR dr.keyword LIKE '%' || ? || '%')
+                    AND c.is_multi_spec = 1 AND c.spec_name = ? AND c.spec_value = ?
+                    ORDER BY
+                        CASE
+                            WHEN ? LIKE '%' || dr.keyword || '%' THEN LENGTH(dr.keyword)
+                            ELSE LENGTH(dr.keyword) / 2
+                        END DESC,
+                        dr.delivery_times ASC
+                    ''', (keyword, keyword, spec_name, spec_value, keyword))
+
+                    rules = []
+                    for row in cursor.fetchall():
+                        # 解析api_config JSON字符串
+                        api_config = row[9]
+                        if api_config:
+                            try:
+                                import json
+                                api_config = json.loads(api_config)
+                            except (json.JSONDecodeError, TypeError):
+                                # 如果解析失败，保持原始字符串
+                                pass
+
+                        rules.append({
+                            'id': row[0],
+                            'keyword': row[1],
+                            'card_id': row[2],
+                            'delivery_count': row[3],
+                            'enabled': bool(row[4]),
+                            'description': row[5],
+                            'delivery_times': row[6] or 0,
+                            'card_name': row[7],
+                            'card_type': row[8],
+                            'api_config': api_config,
+                            'text_content': row[10],
+                            'data_content': row[11],
+                            'card_enabled': bool(row[12]),
+                            'card_description': row[13],
+                            'card_delay_seconds': row[14] or 0,
+                            'is_multi_spec': bool(row[15]),
+                            'spec_name': row[16],
+                            'spec_value': row[17]
+                        })
+
+                    if rules:
+                        logger.info(f"找到多规格匹配规则: {keyword} - {spec_name}:{spec_value}")
+                        return rules
+
+                # 兜底匹配：仅卡券名称
+                cursor.execute('''
+                SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
+                       dr.description, dr.delivery_times,
+                       c.name as card_name, c.type as card_type, c.api_config,
+                       c.text_content, c.data_content, c.enabled as card_enabled,
+                       c.description as card_description, c.delay_seconds as card_delay_seconds,
+                       c.is_multi_spec, c.spec_name, c.spec_value
+                FROM delivery_rules dr
+                LEFT JOIN cards c ON dr.card_id = c.id
+                WHERE dr.enabled = 1 AND c.enabled = 1
+                AND (? LIKE '%' || dr.keyword || '%' OR dr.keyword LIKE '%' || ? || '%')
+                AND (c.is_multi_spec = 0 OR c.is_multi_spec IS NULL)
+                ORDER BY
+                    CASE
+                        WHEN ? LIKE '%' || dr.keyword || '%' THEN LENGTH(dr.keyword)
+                        ELSE LENGTH(dr.keyword) / 2
+                    END DESC,
+                    dr.delivery_times ASC
+                ''', (keyword, keyword, keyword))
+
+                rules = []
+                for row in cursor.fetchall():
+                    # 解析api_config JSON字符串
+                    api_config = row[9]
+                    if api_config:
+                        try:
+                            import json
+                            api_config = json.loads(api_config)
+                        except (json.JSONDecodeError, TypeError):
+                            # 如果解析失败，保持原始字符串
+                            pass
+
+                    rules.append({
+                        'id': row[0],
+                        'keyword': row[1],
+                        'card_id': row[2],
+                        'delivery_count': row[3],
+                        'enabled': bool(row[4]),
+                        'description': row[5],
+                        'delivery_times': row[6] or 0,
+                        'card_name': row[7],
+                        'card_type': row[8],
+                        'api_config': api_config,
+                        'text_content': row[10],
+                        'data_content': row[11],
+                        'card_enabled': bool(row[12]),
+                        'card_description': row[13],
+                        'card_delay_seconds': row[14] or 0,
+                        'is_multi_spec': bool(row[15]) if row[15] is not None else False,
+                        'spec_name': row[16],
+                        'spec_value': row[17]
+                    })
+
+                if rules:
+                    logger.info(f"找到兜底匹配规则: {keyword}")
+                else:
+                    logger.info(f"未找到匹配规则: {keyword}")
+
+                return rules
+
+            except Exception as e:
+                logger.error(f"获取发货规则失败: {e}")
+                return []
 
     def delete_card(self, card_id: int):
         """删除卡券"""
@@ -2462,6 +2671,49 @@ class DBManager:
         except Exception as e:
             logger.error(f"获取商品信息失败: {e}")
             return None
+
+    def update_item_multi_spec_status(self, cookie_id: str, item_id: str, is_multi_spec: bool) -> bool:
+        """更新商品的多规格状态"""
+        try:
+            with self.lock:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                UPDATE item_info
+                SET is_multi_spec = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE cookie_id = ? AND item_id = ?
+                ''', (is_multi_spec, cookie_id, item_id))
+
+                if cursor.rowcount > 0:
+                    self.conn.commit()
+                    logger.info(f"更新商品多规格状态成功: {item_id} -> {is_multi_spec}")
+                    return True
+                else:
+                    logger.warning(f"商品不存在，无法更新多规格状态: {item_id}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"更新商品多规格状态失败: {e}")
+            self.conn.rollback()
+            return False
+
+    def get_item_multi_spec_status(self, cookie_id: str, item_id: str) -> bool:
+        """获取商品的多规格状态"""
+        try:
+            with self.lock:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT is_multi_spec FROM item_info
+                WHERE cookie_id = ? AND item_id = ?
+                ''', (cookie_id, item_id))
+
+                row = cursor.fetchone()
+                if row:
+                    return bool(row[0]) if row[0] is not None else False
+                return False
+
+        except Exception as e:
+            logger.error(f"获取商品多规格状态失败: {e}")
+            return False
 
     def get_items_by_cookie(self, cookie_id: str) -> List[Dict]:
         """获取指定Cookie的所有商品信息
