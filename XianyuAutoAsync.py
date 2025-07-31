@@ -119,21 +119,30 @@ class XianyuLive:
             logger.error(f"【{self.cookie_id}】获取自动确认发货设置失败: {self._safe_str(e)}")
             return True  # 出错时默认启用
 
-    def can_auto_delivery(self, item_id: str) -> bool:
-        """检查是否可以进行自动发货（防重复发货）"""
+
+
+    def can_auto_delivery(self, order_id: str) -> bool:
+        """检查是否可以进行自动发货（防重复发货）- 基于订单ID"""
+        if not order_id:
+            # 如果没有订单ID，则不进行冷却检查，允许发货
+            return True
+
         current_time = time.time()
-        last_delivery = self.last_delivery_time.get(item_id, 0)
+        last_delivery = self.last_delivery_time.get(order_id, 0)
 
         if current_time - last_delivery < self.delivery_cooldown:
-            logger.info(f"【{self.cookie_id}】商品 {item_id} 在冷却期内，跳过自动发货")
+            logger.info(f"【{self.cookie_id}】订单 {order_id} 在冷却期内，跳过自动发货")
             return False
 
         return True
 
-    def mark_delivery_sent(self, item_id: str):
-        """标记商品已发货"""
-        self.last_delivery_time[item_id] = time.time()
-        logger.debug(f"【{self.cookie_id}】标记商品 {item_id} 已发货")
+    def mark_delivery_sent(self, order_id: str):
+        """标记订单已发货 - 基于订单ID"""
+        if order_id:
+            self.last_delivery_time[order_id] = time.time()
+            logger.debug(f"【{self.cookie_id}】标记订单 {order_id} 已发货")
+        else:
+            logger.debug(f"【{self.cookie_id}】无订单ID，跳过发货标记")
 
 
 
@@ -1062,8 +1071,10 @@ class XianyuLive:
             logger.error(f"发送自动发货通知异常: {self._safe_str(e)}")
 
     async def auto_confirm(self, order_id, retry_count=0):
-        """自动确认发货 - 使用加密模块"""
+        """自动确认发货 - 使用加密模块，不包含延时处理（延时已在_auto_delivery中处理）"""
         try:
+            logger.debug(f"【{self.cookie_id}】开始确认发货，订单ID: {order_id}")
+
             # 导入超级混淆加密模块
             from secure_confirm_ultra import SecureConfirm
 
@@ -1083,8 +1094,48 @@ class XianyuLive:
             logger.error(f"【{self.cookie_id}】加密确认模块调用失败: {self._safe_str(e)}")
             return {"error": f"加密确认模块调用失败: {self._safe_str(e)}", "order_id": order_id}
 
-    async def _auto_delivery(self, item_id: str, item_title: str = None):
-        """自动发货功能"""
+    async def fetch_order_detail_info(self, order_id: str):
+        """获取订单详情信息"""
+        try:
+            logger.info(f"【{self.cookie_id}】开始获取订单详情: {order_id}")
+
+            # 导入订单详情获取器
+            from utils.order_detail_fetcher import fetch_order_detail_simple
+
+            # 获取当前账号的cookie字符串
+            cookie_string = self.cookie_value
+            logger.debug(f"【{self.cookie_id}】使用Cookie长度: {len(cookie_string) if cookie_string else 0}")
+
+            # 异步获取订单详情（使用当前账号的cookie和无头模式）
+            result = await fetch_order_detail_simple(order_id, cookie_string, headless=True)
+
+            if result:
+                logger.info(f"【{self.cookie_id}】订单详情获取成功: {order_id}")
+                logger.info(f"【{self.cookie_id}】页面标题: {result.get('title', '未知')}")
+
+                # 获取解析后的规格信息
+                spec_name = result.get('spec_name', '')
+                spec_value = result.get('spec_value', '')
+
+                if spec_name and spec_value:
+                    logger.info(f"【{self.cookie_id}】📋 规格名称: {spec_name}")
+                    logger.info(f"【{self.cookie_id}】📝 规格值: {spec_value}")
+                    print(f"🛍️ 【{self.cookie_id}】订单 {order_id} 规格信息: {spec_name} -> {spec_value}")
+                else:
+                    logger.warning(f"【{self.cookie_id}】未获取到有效的规格信息")
+                    print(f"⚠️ 【{self.cookie_id}】订单 {order_id} 规格信息获取失败")
+
+                return result
+            else:
+                logger.warning(f"【{self.cookie_id}】订单详情获取失败: {order_id}")
+                return None
+
+        except Exception as e:
+            logger.error(f"【{self.cookie_id}】获取订单详情异常: {self._safe_str(e)}")
+            return None
+
+    async def _auto_delivery(self, item_id: str, item_title: str = None, order_id: str = None):
+        """自动发货功能 - 获取卡券规则，执行延时，确认发货，发送内容"""
         try:
             from db_manager import db_manager
 
@@ -1199,12 +1250,43 @@ class XianyuLive:
             rule = delivery_rules[0]
             logger.info(f"找到匹配的发货规则: {rule['keyword']} -> {rule['card_name']} ({rule['card_type']})")
 
-            # 检查是否需要延时发货
+            # 获取延时设置
             delay_seconds = rule.get('card_delay_seconds', 0)
+
+            # 执行延时（不管是否确认发货，只要有延时设置就执行）
             if delay_seconds and delay_seconds > 0:
-                logger.info(f"检测到延时发货设置: {delay_seconds}秒，开始延时...")
+                logger.info(f"检测到发货延时设置: {delay_seconds}秒，开始延时...")
                 await asyncio.sleep(delay_seconds)
-                logger.info(f"延时发货完成，开始发送内容")
+                logger.info(f"延时完成")
+
+            # 如果有订单ID，执行确认发货
+            if order_id:
+                # 检查是否启用自动确认发货
+                if not self.is_auto_confirm_enabled():
+                    logger.info(f"自动确认发货已关闭，跳过订单 {order_id}")
+                else:
+                    # 检查确认发货冷却时间
+                    current_time = time.time()
+                    should_confirm = True
+
+                    if order_id in self.confirmed_orders:
+                        last_confirm_time = self.confirmed_orders[order_id]
+                        if current_time - last_confirm_time < self.order_confirm_cooldown:
+                            logger.info(f"订单 {order_id} 已在 {self.order_confirm_cooldown} 秒内确认过，跳过重复确认")
+                            should_confirm = False
+
+                    if should_confirm:
+                        logger.info(f"开始自动确认发货: 订单ID={order_id}")
+                        confirm_result = await self.auto_confirm(order_id)
+                        if confirm_result.get('success'):
+                            self.confirmed_orders[order_id] = current_time
+                            logger.info(f"🎉 自动确认发货成功！订单ID: {order_id}")
+                        else:
+                            logger.warning(f"⚠️ 自动确认发货失败: {confirm_result.get('error', '未知错误')}")
+                            # 即使确认发货失败，也继续发送发货内容
+
+            # 开始处理发货内容
+            logger.info(f"开始处理发货内容，规则: {rule['keyword']} -> {rule['card_name']} ({rule['card_type']})")
 
             delivery_content = None
 
@@ -2024,50 +2106,17 @@ class XianyuLive:
                         except Exception as parse_e:
                             logger.debug(f"解析dynamicOperation JSON失败: {parse_e}")
 
-                    # 如果成功获取到orderId，进行自动确认发货
+                    # 订单ID已提取，将在自动发货时进行确认发货处理
                     if order_id:
-                        # 检查是否启用自动确认发货
-                        if not self.is_auto_confirm_enabled():
-                            logger.info(f'[{msg_time}] 【{self.cookie_id}】自动确认发货已关闭，跳过订单 {order_id}')
-                        else:
-                            # 检查是否已经确认过这个订单
-                            current_time = time.time()
-                            if order_id in self.confirmed_orders:
-                                last_confirm_time = self.confirmed_orders[order_id]
-                                if current_time - last_confirm_time < self.order_confirm_cooldown:
-                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】⏭️ 订单 {order_id} 已在 {self.order_confirm_cooldown} 秒内确认过，跳过重复确认')
-                                else:
-                                    # 超过冷却时间，可以重新确认
-                                    try:
-                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
-                                        confirm_result = await self.auto_confirm(order_id)
-                                        if confirm_result.get('success'):
-                                            self.confirmed_orders[order_id] = current_time
-                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
-                                        else:
-                                            logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
-                                    except Exception as confirm_e:
-                                        logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
-                            else:
-                                # 首次确认这个订单
-                                try:
-                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
-                                    confirm_result = await self.auto_confirm(order_id)
-                                    if confirm_result.get('success'):
-                                        self.confirmed_orders[order_id] = current_time
-                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
-                                    else:
-                                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
-                                except Exception as confirm_e:
-                                    logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
+                        logger.info(f'[{msg_time}] 【{self.cookie_id}】提取到订单ID: {order_id}，将在自动发货时处理确认发货')
                     else:
                         logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID')
 
                 except Exception as extract_e:
                     logger.error(f"提取订单ID失败: {self._safe_str(extract_e)}")
 
-                # 检查是否可以进行自动发货（防重复）
-                if not self.can_auto_delivery(item_id):
+                # 检查是否可以进行自动发货（防重复）- 基于订单ID
+                if not self.can_auto_delivery(order_id):
                     return
 
                 # 构造用户URL
@@ -2080,12 +2129,12 @@ class XianyuLive:
 
                     logger.info(f"【{self.cookie_id}】准备自动发货: item_id={item_id}, item_title={item_title}")
 
-                    # 调用自动发货方法
-                    delivery_content = await self._auto_delivery(item_id, item_title)
+                    # 调用自动发货方法（包含自动确认发货）
+                    delivery_content = await self._auto_delivery(item_id, item_title, order_id)
 
                     if delivery_content:
-                        # 标记已发货（防重复）
-                        self.mark_delivery_sent(item_id)
+                        # 标记已发货（防重复）- 基于订单ID
+                        self.mark_delivery_sent(order_id)
 
                         # 发送发货内容给买家
                         await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
@@ -2150,50 +2199,17 @@ class XianyuLive:
                         except Exception as parse_e:
                             logger.debug(f"解析dynamicOperation JSON失败: {parse_e}")
 
-                    # 如果成功获取到orderId，进行自动确认发货
+                    # 订单ID已提取，将在自动发货时进行确认发货处理
                     if order_id:
-                        # 检查是否启用自动确认发货
-                        if not self.is_auto_confirm_enabled():
-                            logger.info(f'[{msg_time}] 【{self.cookie_id}】自动确认发货已关闭，跳过订单 {order_id}')
-                        else:
-                            # 检查是否已经确认过这个订单
-                            current_time = time.time()
-                            if order_id in self.confirmed_orders:
-                                last_confirm_time = self.confirmed_orders[order_id]
-                                if current_time - last_confirm_time < self.order_confirm_cooldown:
-                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】⏭️ 订单 {order_id} 已在 {self.order_confirm_cooldown} 秒内确认过，跳过重复确认')
-                                else:
-                                    # 超过冷却时间，可以重新确认
-                                    try:
-                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
-                                        confirm_result = await self.auto_confirm(order_id)
-                                        if confirm_result.get('success'):
-                                            self.confirmed_orders[order_id] = current_time
-                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
-                                        else:
-                                            logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
-                                    except Exception as confirm_e:
-                                        logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
-                            else:
-                                # 首次确认这个订单
-                                try:
-                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】开始自动确认发货，订单ID: {order_id}')
-                                    confirm_result = await self.auto_confirm(order_id)
-                                    if confirm_result.get('success'):
-                                        self.confirmed_orders[order_id] = current_time
-                                        logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 自动确认发货成功！订单ID: {order_id}')
-                                    else:
-                                        logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 自动确认发货失败: {confirm_result.get("error", "未知错误")}')
-                                except Exception as confirm_e:
-                                    logger.error(f'[{msg_time}] 【{self.cookie_id}】自动确认发货异常: {self._safe_str(confirm_e)}')
+                        logger.info(f'[{msg_time}] 【{self.cookie_id}】提取到订单ID: {order_id}，将在自动发货时处理确认发货')
                     else:
                         logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID')
 
                 except Exception as extract_e:
                     logger.error(f"提取订单ID失败: {self._safe_str(extract_e)}")
 
-                # 检查是否可以进行自动发货（防重复）
-                if not self.can_auto_delivery(item_id):
+                # 检查是否可以进行自动发货（防重复）- 基于订单ID
+                if not self.can_auto_delivery(order_id):
                     return
 
                 # 构造用户URL
@@ -2206,12 +2222,12 @@ class XianyuLive:
 
                     logger.info(f"【{self.cookie_id}】准备自动发货: item_id={item_id}, item_title={item_title}")
 
-                    # 调用自动发货方法
-                    delivery_content = await self._auto_delivery(item_id, item_title)
+                    # 调用自动发货方法（包含自动确认发货）
+                    delivery_content = await self._auto_delivery(item_id, item_title, order_id)
 
                     if delivery_content:
-                        # 标记已发货（防重复）
-                        self.mark_delivery_sent(item_id)
+                        # 标记已发货（防重复）- 基于订单ID
+                        self.mark_delivery_sent(order_id)
 
                         # 发送发货内容给买家
                         await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
@@ -2300,50 +2316,17 @@ class XianyuLive:
                                 except Exception as parse_e:
                                     logger.debug(f"解析dynamicOperation JSON失败: {parse_e}")
 
-                            # 如果成功获取到orderId，进行自动确认发货
+                            # 订单ID已提取，将在自动发货时进行确认发货处理
                             if order_id:
-                                # 检查是否启用自动确认发货
-                                if not self.is_auto_confirm_enabled():
-                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】自动确认发货已关闭，跳过小刀成功订单 {order_id}')
-                                else:
-                                    # 检查是否已经确认过这个订单
-                                    current_time = time.time()
-                                    if order_id in self.confirmed_orders:
-                                        last_confirm_time = self.confirmed_orders[order_id]
-                                        if current_time - last_confirm_time < self.order_confirm_cooldown:
-                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】⏭️ 订单 {order_id} 已在 {self.order_confirm_cooldown} 秒内确认过，跳过重复确认')
-                                        else:
-                                            # 超过冷却时间，可以重新确认
-                                            try:
-                                                logger.info(f'[{msg_time}] 【{self.cookie_id}】小刀成功，开始自动确认发货，订单ID: {order_id}')
-                                                confirm_result = await self.auto_confirm(order_id)
-                                                if confirm_result.get('success'):
-                                                    self.confirmed_orders[order_id] = current_time
-                                                    logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 小刀成功，自动确认发货成功！订单ID: {order_id}')
-                                                else:
-                                                    logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 小刀成功，自动确认发货失败: {confirm_result.get("error", "未知错误")}')
-                                            except Exception as confirm_e:
-                                                logger.error(f'[{msg_time}] 【{self.cookie_id}】小刀成功，自动确认发货异常: {self._safe_str(confirm_e)}')
-                                    else:
-                                        # 首次确认这个订单
-                                        try:
-                                            logger.info(f'[{msg_time}] 【{self.cookie_id}】小刀成功，开始自动确认发货，订单ID: {order_id}')
-                                            confirm_result = await self.auto_confirm(order_id)
-                                            if confirm_result.get('success'):
-                                                self.confirmed_orders[order_id] = current_time
-                                                logger.info(f'[{msg_time}] 【{self.cookie_id}】🎉 小刀成功，自动确认发货成功！订单ID: {order_id}')
-                                            else:
-                                                logger.warning(f'[{msg_time}] 【{self.cookie_id}】⚠️ 小刀成功，自动确认发货失败: {confirm_result.get("error", "未知错误")}')
-                                        except Exception as confirm_e:
-                                            logger.error(f'[{msg_time}] 【{self.cookie_id}】小刀成功，自动确认发货异常: {self._safe_str(confirm_e)}')
+                                logger.info(f'[{msg_time}] 【{self.cookie_id}】小刀成功，提取到订单ID: {order_id}，将在自动发货时处理确认发货')
                             else:
                                 logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 小刀成功但未能提取到订单ID')
 
                         except Exception as extract_e:
                             logger.error(f"提取订单ID失败: {self._safe_str(extract_e)}")
 
-                        # 检查是否可以进行自动发货（防重复）
-                        if not self.can_auto_delivery(item_id):
+                        # 检查是否可以进行自动发货（防重复）- 基于订单ID
+                        if not self.can_auto_delivery(order_id):
                             return
 
                         # 构造用户URL
@@ -2356,12 +2339,12 @@ class XianyuLive:
 
                             logger.info(f"【{self.cookie_id}】准备自动发货: item_id={item_id}, item_title={item_title}")
 
-                            # 调用自动发货方法
-                            delivery_content = await self._auto_delivery(item_id, item_title)
+                            # 调用自动发货方法（包含自动确认发货）
+                            delivery_content = await self._auto_delivery(item_id, item_title, order_id)
 
                             if delivery_content:
-                                # 标记已发货（防重复）
-                                self.mark_delivery_sent(item_id)
+                                # 标记已发货（防重复）- 基于订单ID
+                                self.mark_delivery_sent(order_id)
 
                                 # 发送发货内容给买家
                                 await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
