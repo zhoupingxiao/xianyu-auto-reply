@@ -899,10 +899,12 @@ def get_cookies_details(current_user: Dict[str, Any] = Depends(get_current_user)
     result = []
     for cookie_id, cookie_value in user_cookies.items():
         cookie_enabled = cookie_manager.manager.get_cookie_status(cookie_id)
+        auto_confirm = db_manager.get_auto_confirm(cookie_id)
         result.append({
             'id': cookie_id,
             'value': cookie_value,
-            'enabled': cookie_enabled
+            'enabled': cookie_enabled,
+            'auto_confirm': auto_confirm
         })
     return result
 
@@ -1312,6 +1314,70 @@ def remove_cookie(cid: str, current_user: Dict[str, Any] = Depends(get_current_u
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class AutoConfirmUpdate(BaseModel):
+    auto_confirm: bool
+
+
+@app.put("/cookies/{cid}/auto-confirm")
+def update_auto_confirm(cid: str, update_data: AutoConfirmUpdate, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """更新账号的自动确认发货设置"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        from db_manager import db_manager
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        if cid not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+        # 更新数据库中的auto_confirm设置
+        success = db_manager.update_auto_confirm(cid, update_data.auto_confirm)
+        if not success:
+            raise HTTPException(status_code=500, detail="更新自动确认发货设置失败")
+
+        # 通知CookieManager更新设置（如果账号正在运行）
+        if hasattr(cookie_manager.manager, 'update_auto_confirm_setting'):
+            cookie_manager.manager.update_auto_confirm_setting(cid, update_data.auto_confirm)
+
+        return {
+            "msg": "success",
+            "auto_confirm": update_data.auto_confirm,
+            "message": f"自动确认发货已{'开启' if update_data.auto_confirm else '关闭'}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/cookies/{cid}/auto-confirm")
+def get_auto_confirm(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取账号的自动确认发货设置"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        from db_manager import db_manager
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        if cid not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+        # 获取auto_confirm设置
+        auto_confirm = db_manager.get_auto_confirm(cid)
+        return {
+            "auto_confirm": auto_confirm,
+            "message": f"自动确认发货当前{'开启' if auto_confirm else '关闭'}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 

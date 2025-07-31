@@ -16,6 +16,7 @@ class CookieManager:
         self.tasks: Dict[str, asyncio.Task] = {}
         self.keywords: Dict[str, List[Tuple[str, str]]] = {}
         self.cookie_status: Dict[str, bool] = {}  # 账号启用状态
+        self.auto_confirm_settings: Dict[str, bool] = {}  # 自动确认发货设置
         self._load_from_db()
 
     def _load_from_db(self):
@@ -27,11 +28,15 @@ class CookieManager:
             self.keywords = db_manager.get_all_keywords()
             # 加载所有Cookie状态（默认启用）
             self.cookie_status = db_manager.get_all_cookie_status()
-            # 为没有状态记录的Cookie设置默认启用状态
+            # 加载所有auto_confirm设置
+            self.auto_confirm_settings = {}
             for cookie_id in self.cookies.keys():
+                # 为没有状态记录的Cookie设置默认启用状态
                 if cookie_id not in self.cookie_status:
                     self.cookie_status[cookie_id] = True
-            logger.info(f"从数据库加载了 {len(self.cookies)} 个Cookie、{len(self.keywords)} 组关键字和 {len(self.cookie_status)} 个状态记录")
+                # 加载auto_confirm设置
+                self.auto_confirm_settings[cookie_id] = db_manager.get_auto_confirm(cookie_id)
+            logger.info(f"从数据库加载了 {len(self.cookies)} 个Cookie、{len(self.keywords)} 组关键字、{len(self.cookie_status)} 个状态记录和 {len(self.auto_confirm_settings)} 个自动确认设置")
         except Exception as e:
             logger.error(f"从数据库加载数据失败: {e}")
 
@@ -272,6 +277,25 @@ class CookieManager:
             logger.info(f"成功停止Cookie任务: {cookie_id}")
         except Exception as e:
             logger.error(f"停止Cookie任务失败: {cookie_id}, {e}")
+
+    def update_auto_confirm_setting(self, cookie_id: str, auto_confirm: bool):
+        """实时更新账号的自动确认发货设置"""
+        try:
+            # 更新内存中的设置
+            self.auto_confirm_settings[cookie_id] = auto_confirm
+            logger.info(f"更新账号 {cookie_id} 自动确认发货设置: {'开启' if auto_confirm else '关闭'}")
+
+            # 如果账号正在运行，通知XianyuLive实例更新设置
+            if cookie_id in self.tasks and not self.tasks[cookie_id].done():
+                # 这里可以通过某种方式通知正在运行的XianyuLive实例
+                # 由于XianyuLive会从数据库读取设置，所以数据库已经更新就足够了
+                logger.info(f"账号 {cookie_id} 正在运行，自动确认发货设置已实时生效")
+        except Exception as e:
+            logger.error(f"更新自动确认发货设置失败: {cookie_id}, {e}")
+
+    def get_auto_confirm_setting(self, cookie_id: str) -> bool:
+        """获取账号的自动确认发货设置"""
+        return self.auto_confirm_settings.get(cookie_id, True)  # 默认开启
 
 
 # 在 Start.py 中会把此变量赋值为具体实例

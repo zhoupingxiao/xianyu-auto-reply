@@ -106,12 +106,13 @@ class DBManager:
             )
             ''')
 
-            # 创建cookies表（添加user_id字段）
+            # 创建cookies表（添加user_id字段和auto_confirm字段）
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS cookies (
                 id TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
+                auto_confirm INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
@@ -367,6 +368,17 @@ class DBManager:
                     # user_id列存在，更新NULL值
                     self._execute_sql(cursor, "UPDATE cookies SET user_id = ? WHERE user_id IS NULL", (admin_user_id,))
 
+                # 为cookies表添加auto_confirm字段（如果不存在）
+                try:
+                    self._execute_sql(cursor, "SELECT auto_confirm FROM cookies LIMIT 1")
+                except sqlite3.OperationalError:
+                    # auto_confirm列不存在，需要添加并设置默认值
+                    self._execute_sql(cursor, "ALTER TABLE cookies ADD COLUMN auto_confirm INTEGER DEFAULT 1")
+                    self._execute_sql(cursor, "UPDATE cookies SET auto_confirm = 1 WHERE auto_confirm IS NULL")
+                else:
+                    # auto_confirm列存在，更新NULL值
+                    self._execute_sql(cursor, "UPDATE cookies SET auto_confirm = 1 WHERE auto_confirm IS NULL")
+
                 # 为delivery_rules表添加user_id字段（如果不存在）
                 try:
                     self._execute_sql(cursor, "SELECT user_id FROM delivery_rules LIMIT 1")
@@ -576,23 +588,51 @@ class DBManager:
                 return None
 
     def get_cookie_details(self, cookie_id: str) -> Optional[Dict[str, any]]:
-        """获取Cookie的详细信息，包括user_id"""
+        """获取Cookie的详细信息，包括user_id和auto_confirm"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                self._execute_sql(cursor, "SELECT id, value, user_id, created_at FROM cookies WHERE id = ?", (cookie_id,))
+                self._execute_sql(cursor, "SELECT id, value, user_id, auto_confirm, created_at FROM cookies WHERE id = ?", (cookie_id,))
                 result = cursor.fetchone()
                 if result:
                     return {
                         'id': result[0],
                         'value': result[1],
                         'user_id': result[2],
-                        'created_at': result[3]
+                        'auto_confirm': bool(result[3]),
+                        'created_at': result[4]
                     }
                 return None
             except Exception as e:
                 logger.error(f"获取Cookie详细信息失败: {e}")
                 return None
+
+    def update_auto_confirm(self, cookie_id: str, auto_confirm: bool) -> bool:
+        """更新Cookie的自动确认发货设置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "UPDATE cookies SET auto_confirm = ? WHERE id = ?", (int(auto_confirm), cookie_id))
+                self.conn.commit()
+                logger.info(f"更新账号 {cookie_id} 自动确认发货设置: {'开启' if auto_confirm else '关闭'}")
+                return True
+            except Exception as e:
+                logger.error(f"更新自动确认发货设置失败: {e}")
+                return False
+
+    def get_auto_confirm(self, cookie_id: str) -> bool:
+        """获取Cookie的自动确认发货设置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "SELECT auto_confirm FROM cookies WHERE id = ?", (cookie_id,))
+                result = cursor.fetchone()
+                if result:
+                    return bool(result[0])
+                return True  # 默认开启
+            except Exception as e:
+                logger.error(f"获取自动确认发货设置失败: {e}")
+                return True  # 出错时默认开启
     
     # -------------------- 关键字操作 --------------------
     def save_keywords(self, cookie_id: str, keywords: List[Tuple[str, str]]) -> bool:
