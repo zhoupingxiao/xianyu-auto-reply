@@ -46,7 +46,7 @@
 - **批量管理** - 支持批量查看、编辑商品信息
 - **智能去重** - 自动去重，避免重复存储
 
-### � 商品搜索功能
+### 🔍 商品搜索功能
 - **真实数据获取** - 基于Playwright技术获取真实闲鱼商品数据
 - **智能排序** - 按"人想要"数量自动倒序排列
 - **多页搜索** - 支持一次性获取多页商品数据
@@ -297,7 +297,6 @@ docker rm -f xianyu-auto-reply
 
 ## ⚙️ 配置说明
 
-
 ### 管理员密码配置
 
 **重要**：为了系统安全，强烈建议修改默认管理员密码！
@@ -314,7 +313,6 @@ docker rm -f xianyu-auto-reply
 2. 进入系统设置页面
 3. 在"修改密码"区域输入当前密码和新密码
 4. 点击"修改密码"按钮完成修改
-
 
 **密码管理机制**：
 - 数据库初始化时创建admin用户，密码为 `admin123`
@@ -437,43 +435,7 @@ curl http://localhost:8080/health
 
 ### 🔧 故障排除
 
-#### 常见问题解决
-
-**1. 商品搜索功能报错（Playwright浏览器问题）**
-```bash
-# 错误信息：Executable doesn't exist at /root/.cache/ms-playwright/chromium...
-
-# 解决方案：重新构建镜像（推荐）
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
-
-# 或者手动修复（临时方案）
-docker exec -it xianyu-auto-reply bash
-playwright install chromium
-exit
-docker restart xianyu-auto-reply
-```
-
-**2. JavaScript运行时错误**
-```bash
-# 错误信息：Could not find an available JavaScript runtime
-
-# 解决方案1：重新构建镜像（推荐）
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
-
-# 解决方案2：手动修复
-docker exec -it xianyu-auto-reply bash
-apt-get update
-apt-get install -y nodejs npm
-python fix_js_runtime.py
-exit
-docker restart xianyu-auto-reply
-```
-
-**2. 其他问题排查**
+**1. 问题排查**
 1. 查看日志：`docker-compose logs -f`
 2. 检查状态：`./docker-deploy.sh status`
 3. 健康检查：`curl http://localhost:8080/health`

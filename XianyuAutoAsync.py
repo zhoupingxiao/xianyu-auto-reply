@@ -107,11 +107,7 @@ class XianyuLive:
         self.confirmed_orders = {}  # 记录已确认发货的订单，防止重复确认
         self.order_confirm_cooldown = 300  # 5分钟内不重复确认同一订单
         
-        # 人工接管功能已禁用，永远走自动模式
-        # self.manual_mode_conversations = set()  # 存储处于人工接管模式的会话ID
-        # self.manual_mode_timeout = MANUAL_MODE.get('timeout', 3600)  # 人工接管超时时间，默认1小时
-        # self.manual_mode_timestamps = {}  # 记录进入人工模式的时间
-        # self.toggle_keywords = MANUAL_MODE.get('toggle_keywords', ['。'])  # 切换关键词
+
         self.session = None  # 用于API调用的aiohttp session
 
     def can_auto_delivery(self, item_id: str) -> bool:
@@ -130,39 +126,7 @@ class XianyuLive:
         self.last_delivery_time[item_id] = time.time()
         logger.debug(f"【{self.cookie_id}】标记商品 {item_id} 已发货")
 
-    # 人工接管功能已禁用，以下方法不再使用
-    # def check_toggle_keywords(self, message):
-    #     """检查消息是否包含切换关键词"""
-    #     return any(keyword in message for keyword in self.toggle_keywords)
 
-    # def is_manual_mode(self, chat_id):
-    #     """检查是否处于人工接管模式"""
-    #     if chat_id in self.manual_mode_conversations:
-    #         # 检查是否超时
-    #         if time.time() - self.manual_mode_timestamps.get(chat_id, 0) > self.manual_mode_timeout:
-    #             self.exit_manual_mode(chat_id)
-    #             return False
-    #         return True
-    #     return False
-
-    # def enter_manual_mode(self, chat_id):
-    #     """进入人工接管模式"""
-    #     self.manual_mode_conversations.add(chat_id)
-    #     self.manual_mode_timestamps[chat_id] = time.time()
-
-    # def exit_manual_mode(self, chat_id):
-    #     """退出人工接管模式"""
-    #     self.manual_mode_conversations.discard(chat_id)
-    #     self.manual_mode_timestamps.pop(chat_id, None)
-
-    # def toggle_manual_mode(self, chat_id):
-    #     """切换人工接管模式"""
-    #     if self.is_manual_mode(chat_id):
-    #         self.exit_manual_mode(chat_id)
-    #         return False
-    #     else:
-    #         self.enter_manual_mode(chat_id)
-    #         return True
 
     async def refresh_token(self):
         """刷新token"""
@@ -1848,31 +1812,7 @@ class XianyuLive:
                 logger.debug(f"提取用户ID失败: {self._safe_str(e)}")
                 user_id = "unknown_user"
 
-            # 安全地获取商品ID
-            # item_id = None
-            # try:
-            #     # 尝试从reminderUrl中提取商品ID
-            #     message_1 = message.get("1")
-            #     if isinstance(message_1, dict):
-            #         reminder_data = message_1.get("10")
-            #         if isinstance(reminder_data, dict):
-            #             url_info = reminder_data.get("reminderUrl")
-            #             if isinstance(url_info, str) and "itemId=" in url_info:
-            #                 item_id = url_info.split("itemId=")[1].split("&")[0]
-            #                 logger.info(f"从reminderUrl提取商品ID: {item_id}")
 
-            #     # 如果没有提取到，使用辅助方法
-            #     if not item_id:
-            #         item_id = self.extract_item_id_from_message(message)
-
-            #     # 最后的fallback
-            #     if not item_id:
-            #         item_id = f"auto_{user_id}_{int(time.time())}"
-            #         logger.warning(f"无法提取商品ID，使用默认值: {item_id}")
-
-            # except Exception as e:
-            #     logger.error(f"提取商品ID时发生错误: {self._safe_str(e)}")
-            #     item_id = f"auto_{user_id}_{int(time.time())}"
 
             # 安全地提取商品ID
             item_id = None
@@ -1951,12 +1891,7 @@ class XianyuLive:
             # 格式化消息时间
             msg_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(create_time/1000))
 
-            # 人工接管模式已禁用，永远走自动模式
-            # if self.check_toggle_keywords(send_message):
-            #     is_manual = self.toggle_manual_mode(chat_id)
-            #     mode_str = "进入" if is_manual else "退出"
-            #     logger.info(f"[{msg_time}] 【系统】用户: {send_user_name} 的会话 {chat_id} [商品id: {item_id}] {mode_str}人工接管模式")
-            #     return
+
 
             # 判断消息方向
             if send_user_id == self.myid:
@@ -1969,10 +1904,7 @@ class XianyuLive:
 
 
 
-            # 人工接管模式已禁用，永远走自动模式
-            # if self.is_manual_mode(chat_id):
-            #     logger.info(f"[{msg_time}] 【系统】会话 {chat_id} 处于人工接管模式，不自动回复")
-            #     return
+
 
             # 自动回复消息
             if not AUTO_REPLY.get('enabled', True):
