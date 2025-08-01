@@ -5,9 +5,29 @@
 
 import asyncio
 import time
+import sys
+import os
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from loguru import logger
+
+# 修复Docker环境中的asyncio事件循环策略问题
+if sys.platform.startswith('linux') or os.getenv('DOCKER_ENV'):
+    try:
+        # 在Linux/Docker环境中设置事件循环策略
+        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+    except Exception as e:
+        logger.warning(f"设置事件循环策略失败: {e}")
+
+# 确保在Docker环境中使用正确的事件循环
+if os.getenv('DOCKER_ENV'):
+    try:
+        # 强制使用SelectorEventLoop（在Docker中更稳定）
+        if hasattr(asyncio, 'SelectorEventLoop'):
+            loop = asyncio.SelectorEventLoop()
+            asyncio.set_event_loop(loop)
+    except Exception as e:
+        logger.warning(f"设置SelectorEventLoop失败: {e}")
 
 
 class OrderDetailFetcher:
@@ -43,18 +63,54 @@ class OrderDetailFetcher:
         try:
             playwright = await async_playwright().start()
             
-            # 启动浏览器
+            # 启动浏览器（Docker环境优化）
+            browser_args = [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-features=TranslateUI',
+                '--disable-ipc-flooding-protection',
+                '--disable-extensions',
+                '--disable-default-apps',
+                '--disable-sync',
+                '--disable-translate',
+                '--hide-scrollbars',
+                '--mute-audio',
+                '--no-default-browser-check',
+                '--no-pings',
+                '--single-process'  # 在Docker中使用单进程模式
+            ]
+
+            # 在Docker环境中添加额外参数
+            if os.getenv('DOCKER_ENV'):
+                browser_args.extend([
+                    '--disable-background-networking',
+                    '--disable-background-timer-throttling',
+                    '--disable-client-side-phishing-detection',
+                    '--disable-default-apps',
+                    '--disable-hang-monitor',
+                    '--disable-popup-blocking',
+                    '--disable-prompt-on-repost',
+                    '--disable-sync',
+                    '--disable-web-resources',
+                    '--metrics-recording-only',
+                    '--no-first-run',
+                    '--safebrowsing-disable-auto-update',
+                    '--enable-automation',
+                    '--password-store=basic',
+                    '--use-mock-keychain'
+                ])
+
             self.browser = await playwright.chromium.launch(
                 headless=headless,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-gpu'
-                ]
+                args=browser_args
             )
             
             # 创建浏览器上下文

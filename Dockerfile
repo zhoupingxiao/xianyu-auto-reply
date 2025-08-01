@@ -14,6 +14,8 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV TZ=Asia/Shanghai
+ENV DOCKER_ENV=true
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # 安装系统依赖（包括Playwright浏览器依赖）
 RUN apt-get update && \
