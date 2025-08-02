@@ -139,7 +139,6 @@ docker run -d \
   -p 8080:8080 \
   -v $PWD/xianyu-auto-reply/:/app/data/ \
   --name xianyu-auto-reply \
-  --privileged=true \
   registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0
 
 # 访问系统
