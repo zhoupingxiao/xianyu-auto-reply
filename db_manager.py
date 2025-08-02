@@ -371,6 +371,13 @@ class DBManager:
                 self.set_system_setting("db_version", "1.1", "数据库版本号")
                 logger.info("数据库升级到版本1.1完成")
 
+            # 升级到版本1.2 - 支持更多通知渠道类型
+            if current_version < "1.2":
+                logger.info("开始升级数据库到版本1.2...")
+                self.upgrade_notification_channels_types(cursor)
+                self.set_system_setting("db_version", "1.2", "数据库版本号")
+                logger.info("数据库升级到版本1.2完成")
+
                 
         except Exception as e:
             logger.error(f"数据库版本检查或升级失败: {e}")
@@ -526,6 +533,70 @@ class DBManager:
             return True
         except Exception as e:
             logger.error(f"升级notification_channels表失败: {e}")
+            raise
+
+    def upgrade_notification_channels_types(self, cursor):
+        """升级notification_channels表支持更多渠道类型"""
+        try:
+            logger.info("开始升级notification_channels表支持更多渠道类型...")
+
+            # 检查表是否存在
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_channels'")
+            if not cursor.fetchone():
+                logger.info("notification_channels表不存在，无需升级")
+                return True
+
+            # 检查表中是否有数据
+            cursor.execute("SELECT COUNT(*) FROM notification_channels")
+            count = cursor.fetchone()[0]
+
+            # 获取现有数据
+            existing_data = []
+            if count > 0:
+                cursor.execute("SELECT * FROM notification_channels")
+                existing_data = cursor.fetchall()
+                logger.info(f"备份 {count} 条通知渠道数据")
+
+            # 创建新表，支持更多渠道类型
+            cursor.execute('''
+            CREATE TABLE notification_channels_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL CHECK (type IN ('qq','ding_talk','dingtalk','email','webhook','wechat','telegram')),
+                config TEXT NOT NULL,
+                enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            # 复制数据，同时处理类型映射
+            if existing_data:
+                logger.info(f"迁移 {len(existing_data)} 条通知渠道数据到新表")
+                for row in existing_data:
+                    # 处理类型映射：ding_talk -> dingtalk
+                    channel_type = row[3]  # type字段
+                    if channel_type == 'ding_talk':
+                        channel_type = 'dingtalk'
+
+                    # 插入到新表
+                    cursor.execute('''
+                    INSERT INTO notification_channels_new
+                    (id, name, user_id, type, config, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (row[0], row[1], row[2], channel_type, row[4], row[5], row[6], row[7]))
+
+            # 删除旧表
+            cursor.execute("DROP TABLE notification_channels")
+
+            # 重命名新表
+            cursor.execute("ALTER TABLE notification_channels_new RENAME TO notification_channels")
+
+            logger.info("notification_channels表类型升级完成")
+            return True
+        except Exception as e:
+            logger.error(f"升级notification_channels表类型失败: {e}")
             raise
     
     def _migrate_keywords_table_constraints(self, cursor):

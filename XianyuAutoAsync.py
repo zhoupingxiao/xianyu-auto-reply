@@ -918,11 +918,22 @@ class XianyuLive:
                 channel_config = notification.get('channel_config')
 
                 try:
+                    # 解析配置数据
+                    config_data = self._parse_notification_config(channel_config)
+
                     match channel_type:
                         case 'qq':
-                            await self._send_qq_notification(channel_config, notification_msg)
-                        case 'ding_talk':
-                            await self._send_ding_talk_notification(channel_config, notification_msg)
+                            await self._send_qq_notification(config_data, notification_msg)
+                        case 'ding_talk' | 'dingtalk':
+                            await self._send_dingtalk_notification(config_data, notification_msg)
+                        case 'email':
+                            await self._send_email_notification(config_data, notification_msg)
+                        case 'webhook':
+                            await self._send_webhook_notification(config_data, notification_msg)
+                        case 'wechat':
+                            await self._send_wechat_notification(config_data, notification_msg)
+                        case 'telegram':
+                            await self._send_telegram_notification(config_data, notification_msg)
                         case _:
                             logger.warning(f"不支持的通知渠道类型: {channel_type}")
 
@@ -932,13 +943,25 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"处理消息通知失败: {self._safe_str(e)}")
 
-    async def _send_qq_notification(self, config: str, message: str):
+    def _parse_notification_config(self, config: str) -> dict:
+        """解析通知配置数据"""
+        try:
+            import json
+            # 尝试解析JSON格式的配置
+            return json.loads(config)
+        except (json.JSONDecodeError, TypeError):
+            # 兼容旧格式（直接字符串）
+            return {"config": config}
+
+    async def _send_qq_notification(self, config_data: dict, message: str):
         """发送QQ通知"""
         try:
             import aiohttp
 
             # 解析配置（QQ号码）
-            qq_number = config.strip()
+            qq_number = config_data.get('qq_number') or config_data.get('config', '')
+            qq_number = qq_number.strip() if qq_number else ''
+
             if not qq_number:
                 logger.warning("QQ通知配置为空")
                 return
@@ -961,16 +984,34 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"发送QQ通知异常: {self._safe_str(e)}")
 
-    async def _send_ding_talk_notification(self, config: str, message: str):
+    async def _send_dingtalk_notification(self, config_data: dict, message: str):
         """发送钉钉通知"""
         try:
             import aiohttp
             import json
-            # 解析配置（钉钉机器人Webhook URL）
-            webhook_url = config.strip()
+            import hmac
+            import hashlib
+            import base64
+            import time
+
+            # 解析配置
+            webhook_url = config_data.get('webhook_url') or config_data.get('config', '')
+            secret = config_data.get('secret', '')
+
+            webhook_url = webhook_url.strip() if webhook_url else ''
             if not webhook_url:
                 logger.warning("钉钉通知配置为空")
                 return
+
+            # 如果有加签密钥，生成签名
+            if secret:
+                timestamp = str(round(time.time() * 1000))
+                secret_enc = secret.encode('utf-8')
+                string_to_sign = f'{timestamp}\n{secret}'
+                string_to_sign_enc = string_to_sign.encode('utf-8')
+                hmac_code = hmac.new(secret_enc, string_to_sign_enc, digestmod=hashlib.sha256).digest()
+                sign = base64.b64encode(hmac_code).decode('utf-8')
+                webhook_url += f'&timestamp={timestamp}&sign={sign}'
 
             data = {
                 "msgtype": "markdown",
@@ -983,12 +1024,164 @@ class XianyuLive:
             async with aiohttp.ClientSession() as session:
                 async with session.post(webhook_url, json=data, timeout=10) as response:
                     if response.status == 200:
-                        logger.info(f"钉钉通知发送成功: {webhook_url}")
+                        logger.info(f"钉钉通知发送成功")
                     else:
                         logger.warning(f"钉钉通知发送失败: {response.status}")
-            
+
         except Exception as e:
             logger.error(f"发送钉钉通知异常: {self._safe_str(e)}")
+
+    async def _send_email_notification(self, config_data: dict, message: str):
+        """发送邮件通知"""
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+
+            # 解析配置
+            smtp_server = config_data.get('smtp_server', '')
+            smtp_port = int(config_data.get('smtp_port', 587))
+            email_user = config_data.get('email_user', '')
+            email_password = config_data.get('email_password', '')
+            recipient_email = config_data.get('recipient_email', '')
+
+            if not all([smtp_server, email_user, email_password, recipient_email]):
+                logger.warning("邮件通知配置不完整")
+                return
+
+            # 创建邮件
+            msg = MIMEMultipart()
+            msg['From'] = email_user
+            msg['To'] = recipient_email
+            msg['Subject'] = "闲鱼自动回复通知"
+
+            # 添加邮件正文
+            msg.attach(MIMEText(message, 'plain', 'utf-8'))
+
+            # 发送邮件
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(email_user, email_password)
+            server.send_message(msg)
+            server.quit()
+
+            logger.info(f"邮件通知发送成功: {recipient_email}")
+
+        except Exception as e:
+            logger.error(f"发送邮件通知异常: {self._safe_str(e)}")
+
+    async def _send_webhook_notification(self, config_data: dict, message: str):
+        """发送Webhook通知"""
+        try:
+            import aiohttp
+            import json
+
+            # 解析配置
+            webhook_url = config_data.get('webhook_url', '')
+            http_method = config_data.get('http_method', 'POST').upper()
+            headers_str = config_data.get('headers', '{}')
+
+            if not webhook_url:
+                logger.warning("Webhook通知配置为空")
+                return
+
+            # 解析自定义请求头
+            try:
+                custom_headers = json.loads(headers_str) if headers_str else {}
+            except json.JSONDecodeError:
+                custom_headers = {}
+
+            # 设置默认请求头
+            headers = {'Content-Type': 'application/json'}
+            headers.update(custom_headers)
+
+            # 构建请求数据
+            data = {
+                'message': message,
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'source': 'xianyu-auto-reply'
+            }
+
+            async with aiohttp.ClientSession() as session:
+                if http_method == 'POST':
+                    async with session.post(webhook_url, json=data, headers=headers, timeout=10) as response:
+                        if response.status == 200:
+                            logger.info(f"Webhook通知发送成功")
+                        else:
+                            logger.warning(f"Webhook通知发送失败: {response.status}")
+                elif http_method == 'PUT':
+                    async with session.put(webhook_url, json=data, headers=headers, timeout=10) as response:
+                        if response.status == 200:
+                            logger.info(f"Webhook通知发送成功")
+                        else:
+                            logger.warning(f"Webhook通知发送失败: {response.status}")
+                else:
+                    logger.warning(f"不支持的HTTP方法: {http_method}")
+
+        except Exception as e:
+            logger.error(f"发送Webhook通知异常: {self._safe_str(e)}")
+
+    async def _send_wechat_notification(self, config_data: dict, message: str):
+        """发送微信通知"""
+        try:
+            import aiohttp
+            import json
+
+            # 解析配置
+            webhook_url = config_data.get('webhook_url', '')
+
+            if not webhook_url:
+                logger.warning("微信通知配置为空")
+                return
+
+            data = {
+                "msgtype": "text",
+                "text": {
+                    "content": message
+                }
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=data, timeout=10) as response:
+                    if response.status == 200:
+                        logger.info(f"微信通知发送成功")
+                    else:
+                        logger.warning(f"微信通知发送失败: {response.status}")
+
+        except Exception as e:
+            logger.error(f"发送微信通知异常: {self._safe_str(e)}")
+
+    async def _send_telegram_notification(self, config_data: dict, message: str):
+        """发送Telegram通知"""
+        try:
+            import aiohttp
+
+            # 解析配置
+            bot_token = config_data.get('bot_token', '')
+            chat_id = config_data.get('chat_id', '')
+
+            if not all([bot_token, chat_id]):
+                logger.warning("Telegram通知配置不完整")
+                return
+
+            # 构建API URL
+            api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+            data = {
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, json=data, timeout=10) as response:
+                    if response.status == 200:
+                        logger.info(f"Telegram通知发送成功")
+                    else:
+                        logger.warning(f"Telegram通知发送失败: {response.status}")
+
+        except Exception as e:
+            logger.error(f"发送Telegram通知异常: {self._safe_str(e)}")
 
     async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh"):
         """发送Token刷新异常通知（带防重复机制）"""
@@ -1036,11 +1229,30 @@ class XianyuLive:
                 channel_config = notification.get('channel_config')
 
                 try:
-                    if channel_type == 'qq':
-                        await self._send_qq_notification(channel_config, notification_msg)
-                        notification_sent = True
-                    else:
-                        logger.warning(f"不支持的通知渠道类型: {channel_type}")
+                    # 解析配置数据
+                    config_data = self._parse_notification_config(channel_config)
+
+                    match channel_type:
+                        case 'qq':
+                            await self._send_qq_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case 'ding_talk' | 'dingtalk':
+                            await self._send_dingtalk_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case 'email':
+                            await self._send_email_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case 'webhook':
+                            await self._send_webhook_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case 'wechat':
+                            await self._send_wechat_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case 'telegram':
+                            await self._send_telegram_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case _:
+                            logger.warning(f"不支持的通知渠道类型: {channel_type}")
 
                 except Exception as notify_error:
                     logger.error(f"发送Token刷新通知失败 ({notification.get('channel_name', 'Unknown')}): {self._safe_str(notify_error)}")
@@ -1106,9 +1318,34 @@ class XianyuLive:
                     channel_type = notification.get('channel_type', 'qq')
                     channel_config = notification.get('channel_config', '')
 
-                    if channel_type == 'qq':
-                        await self._send_qq_notification(channel_config, notification_message)
-                        logger.info(f"已发送自动发货通知到QQ: {channel_config}")
+                    try:
+                        # 解析配置数据
+                        config_data = self._parse_notification_config(channel_config)
+
+                        match channel_type:
+                            case 'qq':
+                                await self._send_qq_notification(config_data, notification_message)
+                                logger.info(f"已发送自动发货通知到QQ")
+                            case 'ding_talk' | 'dingtalk':
+                                await self._send_dingtalk_notification(config_data, notification_message)
+                                logger.info(f"已发送自动发货通知到钉钉")
+                            case 'email':
+                                await self._send_email_notification(config_data, notification_message)
+                                logger.info(f"已发送自动发货通知到邮箱")
+                            case 'webhook':
+                                await self._send_webhook_notification(config_data, notification_message)
+                                logger.info(f"已发送自动发货通知到Webhook")
+                            case 'wechat':
+                                await self._send_wechat_notification(config_data, notification_message)
+                                logger.info(f"已发送自动发货通知到微信")
+                            case 'telegram':
+                                await self._send_telegram_notification(config_data, notification_message)
+                                logger.info(f"已发送自动发货通知到Telegram")
+                            case _:
+                                logger.warning(f"不支持的通知渠道类型: {channel_type}")
+
+                    except Exception as notify_error:
+                        logger.error(f"发送自动发货通知失败: {self._safe_str(notify_error)}")
 
         except Exception as e:
             logger.error(f"发送自动发货通知异常: {self._safe_str(e)}")

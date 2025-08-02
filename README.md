@@ -160,14 +160,132 @@ cd xianyu-auto-reply
 # http://localhost:8080
 ```
 
-#### 🔧 Docker部署故障排除
+### 方式三：本地部署（开发环境）
 
-如果遇到构建问题，请参考 [Docker修复指南](DOCKER_FIX.md)
+```bash
+# 1. 克隆项目
+git clone https://github.com/zhinianboke/xianyu-auto-reply.git
+cd xianyu-auto-reply
 
-**常见问题**：
-- **sqlite3错误**：已修复，sqlite3是Python内置模块，无需安装
-- **Docker未运行**：确保Docker Desktop正在运行
-- **端口冲突**：修改docker-compose.yml中的端口映射为其他端口
+# 2. 创建虚拟环境（推荐）
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# 或 venv\Scripts\activate  # Windows
+
+# 3. 安装Python依赖
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 4. 安装Playwright浏览器
+playwright install chromium
+playwright install-deps chromium  # Linux需要
+
+# 5. 启动系统
+python Start.py
+
+# 6. 访问系统
+# http://localhost:8080
+```
+
+### 📋 环境要求
+
+- **Python**: 3.11+
+- **Node.js**: 16+ (用于JavaScript执行)
+- **系统**: Windows/Linux/macOS
+- **内存**: 建议2GB+
+- **存储**: 建议10GB+
+- **Docker**: 20.10+ (Docker部署)
+- **Docker Compose**: 2.0+ (Docker部署)
+
+### 🌐 访问系统
+
+部署完成后，您可以通过以下方式访问系统：
+
+- **Web管理界面**：http://localhost:8080
+- **默认管理员账号**：
+  - 用户名：`admin`
+  - 密码：`admin123`
+- **API文档**：http://localhost:8080/docs
+- **健康检查**：http://localhost:8080/health
+
+> ⚠️ **安全提示**：首次登录后请立即修改默认密码！
+
+### 🔧 Docker部署管理
+
+使用 `docker-deploy.sh` 脚本可以方便地管理Docker部署：
+
+```bash
+# 查看所有可用命令
+./docker-deploy.sh help
+
+# 初始化配置
+./docker-deploy.sh init
+
+# 构建镜像
+./docker-deploy.sh build
+
+# 启动服务
+./docker-deploy.sh start
+
+# 启动包含Nginx的完整服务
+./docker-deploy.sh start with-nginx
+
+# 查看服务状态
+./docker-deploy.sh status
+
+# 查看实时日志
+./docker-deploy.sh logs
+
+# 备份数据
+./docker-deploy.sh backup
+
+# 更新部署
+./docker-deploy.sh update
+
+# 停止服务
+./docker-deploy.sh stop
+
+# 重启服务
+./docker-deploy.sh restart
+
+# 清理环境
+./docker-deploy.sh cleanup
+```
+
+### 🛠️ 故障排除
+
+**常见问题及解决方案**：
+
+1. **Docker未运行**
+   ```bash
+   # 启动Docker Desktop或Docker服务
+   sudo systemctl start docker  # Linux
+   ```
+
+2. **端口冲突**
+   ```bash
+   # 修改.env文件中的WEB_PORT
+   WEB_PORT=8081
+   ```
+
+3. **权限问题**
+   ```bash
+   # 确保数据目录有正确权限
+   sudo chown -R $USER:$USER ./data ./logs ./backups
+   ```
+
+4. **内存不足**
+   ```bash
+   # 调整.env文件中的资源限制
+   MEMORY_LIMIT=1024
+   CPU_LIMIT=1.0
+   ```
+
+5. **Playwright浏览器安装失败**
+   ```bash
+   # 手动安装浏览器
+   playwright install chromium --with-deps
+   ```
 - **权限问题**：Linux系统下使用 `sudo ./docker-deploy.sh`
 
 ### 方式三：本地部署
@@ -269,6 +387,59 @@ docker rm -f xianyu-auto-reply
 │   用户数据 + 商品信息 + 配置数据     │
 └─────────────────────────────────────┘
 ```
+
+## ✨ 核心功能特性
+
+### 🚀 自动回复系统
+- **智能关键词匹配** - 支持精确匹配和模糊匹配，灵活配置回复规则
+- **AI智能回复** - 集成多种AI模型（通义千问、GPT等），智能理解用户意图
+- **多账号管理** - 支持同时管理多个闲鱼账号，独立配置和运行
+- **实时消息处理** - WebSocket长连接，毫秒级响应用户消息
+- **自定义回复模板** - 支持占位符和动态内容，个性化回复体验
+
+### 🛒 自动发货系统
+- **智能订单识别** - 自动识别虚拟商品订单，精准匹配发货规则
+- **多重安全验证** - 超级加密保护，防止误操作和数据泄露
+- **批量处理能力** - 支持批量确认发货，提高处理效率
+- **异常处理机制** - 完善的错误处理和重试机制，确保发货成功
+- **多渠道通知** - 支持QQ、钉钉、邮件等多种发货通知方式
+
+### 👥 多用户系统
+- **用户注册登录** - 支持邮箱验证和图形验证码，安全可靠
+- **权限管理** - 管理员和普通用户权限分离，精细化权限控制
+- **数据隔离** - 每个用户的数据完全隔离，保护隐私安全
+- **会话管理** - JWT Token认证，支持自动续期和安全登出
+
+### 📊 数据管理
+- **商品信息管理** - 自动获取和同步商品信息，实时更新状态
+- **订单数据统计** - 详细的订单数据分析和可视化图表
+- **关键词管理** - 灵活的关键词配置，支持正则表达式
+- **数据导入导出** - 支持Excel格式的批量数据操作
+- **自动备份** - 定期自动备份重要数据，防止数据丢失
+
+### 🔍 商品搜索
+- **真实数据获取** - 基于Playwright技术，获取真实闲鱼商品数据
+- **多页搜索** - 支持分页搜索和批量获取，无限制数据采集
+- **数据可视化** - 美观的商品展示界面，支持排序和筛选
+- **搜索历史** - 保存搜索历史和结果，方便数据分析
+
+### 📱 通知系统
+- **多渠道支持** - QQ、钉钉、邮件、微信、Telegram等6种通知方式
+- **智能配置** - 可视化配置界面，支持复杂参数和加密设置
+- **实时推送** - 重要事件实时通知，及时了解系统状态
+- **通知模板** - 自定义通知内容和格式，个性化消息推送
+
+### 🔐 安全特性
+- **Cookie安全管理** - 加密存储用户凭证，定期自动刷新
+- **Token自动刷新** - 智能检测和刷新过期Token，保持连接稳定
+- **操作日志** - 详细记录所有操作日志，支持审计和追踪
+- **异常监控** - 实时监控系统异常和错误，主动预警
+
+### 🎨 用户界面
+- **现代化设计** - 基于Bootstrap 5的响应式界面，美观易用
+- **多主题支持** - 支持明暗主题切换，个性化界面体验
+- **移动端适配** - 完美适配手机和平板设备，随时随地管理
+- **实时更新** - 界面数据实时更新，无需手动刷新
 
 ## 📁 核心文件功能说明
 
