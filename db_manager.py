@@ -125,7 +125,6 @@ class DBManager:
                 keyword TEXT,
                 reply TEXT,
                 item_id TEXT,
-                PRIMARY KEY (cookie_id, keyword),
                 FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE
             )
             ''')
@@ -434,6 +433,10 @@ class DBManager:
                     self._execute_sql(cursor, "ALTER TABLE item_info ADD COLUMN is_multi_spec BOOLEAN DEFAULT FALSE")
                     logger.info("为item_info表添加多规格字段")
 
+                # 处理keywords表的唯一约束问题
+                # 由于SQLite不支持直接修改约束，我们需要重建表
+                self._migrate_keywords_table_constraints(cursor)
+
             self.conn.commit()
             logger.info(f"数据库初始化成功: {self.db_path}")
         except Exception as e:
@@ -442,6 +445,66 @@ class DBManager:
                 self.conn.close()
             raise
     
+    def _migrate_keywords_table_constraints(self, cursor):
+        """迁移keywords表的约束，支持基于商品ID的唯一性校验"""
+        try:
+            # 检查是否已经迁移过（通过检查是否存在新的唯一索引）
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_keywords_unique_with_item'")
+            if cursor.fetchone():
+                logger.info("keywords表约束已经迁移过，跳过")
+                return
+
+            logger.info("开始迁移keywords表约束...")
+
+            # 1. 创建临时表，不设置主键约束
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS keywords_temp (
+                cookie_id TEXT,
+                keyword TEXT,
+                reply TEXT,
+                item_id TEXT,
+                FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE
+            )
+            ''')
+
+            # 2. 复制现有数据到临时表
+            cursor.execute('''
+            INSERT INTO keywords_temp (cookie_id, keyword, reply, item_id)
+            SELECT cookie_id, keyword, reply, item_id FROM keywords
+            ''')
+
+            # 3. 删除原表
+            cursor.execute('DROP TABLE keywords')
+
+            # 4. 重命名临时表
+            cursor.execute('ALTER TABLE keywords_temp RENAME TO keywords')
+
+            # 5. 创建复合唯一索引来实现我们需要的约束逻辑
+            # 对于item_id为空的情况：(cookie_id, keyword)必须唯一
+            cursor.execute('''
+            CREATE UNIQUE INDEX idx_keywords_unique_no_item
+            ON keywords(cookie_id, keyword)
+            WHERE item_id IS NULL OR item_id = ''
+            ''')
+
+            # 对于item_id不为空的情况：(cookie_id, keyword, item_id)必须唯一
+            cursor.execute('''
+            CREATE UNIQUE INDEX idx_keywords_unique_with_item
+            ON keywords(cookie_id, keyword, item_id)
+            WHERE item_id IS NOT NULL AND item_id != ''
+            ''')
+
+            logger.info("keywords表约束迁移完成")
+
+        except Exception as e:
+            logger.error(f"迁移keywords表约束失败: {e}")
+            # 如果迁移失败，尝试回滚
+            try:
+                cursor.execute('DROP TABLE IF EXISTS keywords_temp')
+            except:
+                pass
+            raise
+
     def close(self):
         """关闭数据库连接"""
         if self.conn:
@@ -672,11 +735,20 @@ class DBManager:
                 # 先删除该cookie_id的所有关键字
                 self._execute_sql(cursor, "DELETE FROM keywords WHERE cookie_id = ?", (cookie_id,))
 
-                # 插入新关键字
+                # 插入新关键字，使用INSERT OR REPLACE来处理可能的唯一约束冲突
                 for keyword, reply, item_id in keywords:
-                    self._execute_sql(cursor,
-                        "INSERT INTO keywords (cookie_id, keyword, reply, item_id) VALUES (?, ?, ?, ?)",
-                        (cookie_id, keyword, reply, item_id))
+                    # 标准化item_id：空字符串转为NULL
+                    normalized_item_id = item_id if item_id and item_id.strip() else None
+
+                    try:
+                        self._execute_sql(cursor,
+                            "INSERT INTO keywords (cookie_id, keyword, reply, item_id) VALUES (?, ?, ?, ?)",
+                            (cookie_id, keyword, reply, normalized_item_id))
+                    except sqlite3.IntegrityError as ie:
+                        # 如果遇到唯一约束冲突，记录详细错误信息
+                        item_desc = f"商品ID: {normalized_item_id}" if normalized_item_id else "通用关键词"
+                        logger.error(f"关键词唯一约束冲突: Cookie={cookie_id}, 关键词='{keyword}', {item_desc}")
+                        raise ie
 
                 self.conn.commit()
                 logger.info(f"关键字保存成功: {cookie_id}, {len(keywords)}条")
@@ -2563,6 +2635,23 @@ class DBManager:
             bool: 操作是否成功
         """
         try:
+            # 验证：如果只有商品ID，没有商品详情数据，则不插入数据库
+            if not item_data:
+                logger.debug(f"跳过保存商品信息：缺少商品详情数据 - {item_id}")
+                return False
+
+            # 如果是字典类型，检查是否有标题信息
+            if isinstance(item_data, dict):
+                title = item_data.get('title', '').strip()
+                if not title:
+                    logger.debug(f"跳过保存商品信息：缺少商品标题 - {item_id}")
+                    return False
+
+            # 如果是字符串类型，检查是否为空
+            if isinstance(item_data, str) and not item_data.strip():
+                logger.debug(f"跳过保存商品信息：商品详情为空 - {item_id}")
+                return False
+
             with self.lock:
                 cursor = self.conn.cursor()
 
@@ -2633,6 +2722,7 @@ class DBManager:
 
         except Exception as e:
             logger.error(f"保存商品信息失败: {e}")
+            self.conn.rollback()
             return False
 
     def get_item_info(self, cookie_id: str, item_id: str) -> Optional[Dict]:
@@ -2895,6 +2985,11 @@ class DBManager:
                         item_detail = item_data.get('item_detail', '')
 
                         if not cookie_id or not item_id:
+                            continue
+
+                        # 验证：如果没有商品标题，则跳过保存
+                        if not item_title or not item_title.strip():
+                            logger.debug(f"跳过批量保存商品信息：缺少商品标题 - {item_id}")
                             continue
 
                         # 使用 INSERT OR IGNORE + UPDATE 模式

@@ -19,6 +19,8 @@ import cookie_manager
 from db_manager import db_manager
 from file_log_collector import setup_file_logging, get_file_log_collector
 from ai_reply_engine import ai_reply_engine
+from utils.qr_login import qr_login_manager
+from utils.xianyu_utils import trans_cookies
 from loguru import logger
 
 # 关键字文件路径
@@ -966,6 +968,121 @@ def update_cookie(cid: str, item: CookieIn, current_user: Dict[str, Any] = Depen
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ========================= 扫码登录相关接口 =========================
+
+@app.post("/qr-login/generate")
+async def generate_qr_code(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """生成扫码登录二维码"""
+    try:
+        log_with_user('info', "请求生成扫码登录二维码", current_user)
+
+        result = await qr_login_manager.generate_qr_code()
+
+        if result['success']:
+            log_with_user('info', f"扫码登录二维码生成成功: {result['session_id']}", current_user)
+        else:
+            log_with_user('warning', f"扫码登录二维码生成失败: {result.get('message', '未知错误')}", current_user)
+
+        return result
+
+    except Exception as e:
+        log_with_user('error', f"生成扫码登录二维码异常: {str(e)}", current_user)
+        return {'success': False, 'message': f'生成二维码失败: {str(e)}'}
+
+
+@app.get("/qr-login/check/{session_id}")
+async def check_qr_code_status(session_id: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """检查扫码登录状态"""
+    try:
+        # 清理过期会话
+        qr_login_manager.cleanup_expired_sessions()
+
+        # 获取会话状态
+        status_info = qr_login_manager.get_session_status(session_id)
+
+        if status_info['status'] == 'success':
+            # 登录成功，处理Cookie
+            cookies_info = qr_login_manager.get_session_cookies(session_id)
+            if cookies_info:
+                account_info = await process_qr_login_cookies(
+                    cookies_info['cookies'],
+                    cookies_info['unb'],
+                    current_user
+                )
+                status_info['account_info'] = account_info
+
+                log_with_user('info', f"扫码登录成功处理完成: {session_id}, 账号: {account_info.get('account_id', 'unknown')}", current_user)
+
+        return status_info
+
+    except Exception as e:
+        log_with_user('error', f"检查扫码登录状态异常: {str(e)}", current_user)
+        return {'status': 'error', 'message': str(e)}
+
+
+async def process_qr_login_cookies(cookies: str, unb: str, current_user: Dict[str, Any]) -> Dict[str, Any]:
+    """处理扫码登录获取的Cookie"""
+    try:
+        user_id = current_user['user_id']
+
+        # 检查是否已存在相同unb的账号
+        existing_cookies = db_manager.get_all_cookies(user_id)
+        existing_account_id = None
+
+        for account_id, cookie_value in existing_cookies.items():
+            try:
+                # 解析现有Cookie中的unb
+                existing_cookie_dict = trans_cookies(cookie_value)
+                if existing_cookie_dict.get('unb') == unb:
+                    existing_account_id = account_id
+                    break
+            except:
+                continue
+
+        if existing_account_id:
+            # 更新现有账号的Cookie
+            db_manager.save_cookie(existing_account_id, cookies, user_id)
+
+            # 更新cookie_manager中的Cookie
+            if cookie_manager.manager:
+                cookie_manager.manager.update_cookie(existing_account_id, cookies)
+
+            log_with_user('info', f"扫码登录更新现有账号Cookie: {existing_account_id}, UNB: {unb}", current_user)
+
+            return {
+                'account_id': existing_account_id,
+                'is_new_account': False
+            }
+        else:
+            # 创建新账号，使用unb作为账号ID
+            account_id = unb
+
+            # 确保账号ID唯一
+            counter = 1
+            original_account_id = account_id
+            while account_id in existing_cookies:
+                account_id = f"{original_account_id}_{counter}"
+                counter += 1
+
+            # 保存新账号
+            db_manager.save_cookie(account_id, cookies, user_id)
+
+            # 添加到cookie_manager
+            if cookie_manager.manager:
+                cookie_manager.manager.add_cookie(account_id, cookies)
+
+            log_with_user('info', f"扫码登录创建新账号: {account_id}, UNB: {unb}", current_user)
+
+            return {
+                'account_id': account_id,
+                'is_new_account': True
+            }
+
+    except Exception as e:
+        log_with_user('error', f"处理扫码登录Cookie失败: {str(e)}", current_user)
+        raise e
+
+
 @app.put('/cookies/{cid}/status')
 def update_cookie_status(cid: str, status_data: CookieStatusIn, current_user: Dict[str, Any] = Depends(get_current_user)):
     """更新账号的启用/禁用状态"""
@@ -1403,7 +1520,20 @@ def get_keywords(cid: str, current_user: Dict[str, Any] = Depends(get_current_us
     if cid not in user_cookies:
         raise HTTPException(status_code=403, detail="无权限访问该Cookie")
 
-    return cookie_manager.manager.get_keywords(cid)
+    # 直接从数据库获取所有关键词（避免重复计算）
+    item_keywords = db_manager.get_keywords_with_item_id(cid)
+
+    # 转换为统一格式
+    all_keywords = []
+    for keyword, reply, item_id in item_keywords:
+        all_keywords.append({
+            "keyword": keyword,
+            "reply": reply,
+            "item_id": item_id,
+            "type": "item" if item_id else "normal"
+        })
+
+    return all_keywords
 
 
 @app.get("/keywords-with-item-id/{cid}")

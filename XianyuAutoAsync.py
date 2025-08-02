@@ -257,17 +257,28 @@ class XianyuLive:
             # 发送Cookie更新失败通知
             await self.send_token_refresh_notification(f"Cookie更新失败: {str(e)}", "cookie_update_failed")
 
-    async def save_item_info_to_db(self, item_id: str, item_detail: str = None):
+    async def save_item_info_to_db(self, item_id: str, item_detail: str = None, item_title: str = None):
         """保存商品信息到数据库
 
         Args:
             item_id: 商品ID
             item_detail: 商品详情内容（可以是任意格式的文本）
+            item_title: 商品标题
         """
         try:
             # 跳过以 auto_ 开头的商品ID
             if item_id and item_id.startswith('auto_'):
                 logger.debug(f"跳过保存自动生成的商品ID: {item_id}")
+                return
+
+            # 验证：如果只有商品ID，没有商品标题和商品详情，则不插入数据库
+            if not item_title and not item_detail:
+                logger.debug(f"跳过保存商品信息：缺少商品标题和详情 - {item_id}")
+                return
+
+            # 如果有商品标题但没有详情，也跳过（根据需求，需要同时有标题和详情）
+            if not item_title or not item_detail:
+                logger.debug(f"跳过保存商品信息：商品标题或详情不完整 - {item_id}")
                 return
 
             from db_manager import db_manager
@@ -1288,8 +1299,22 @@ class XianyuLive:
             # 使用第一个匹配的规则（按关键字长度降序排列，优先匹配更精确的规则）
             rule = delivery_rules[0]
 
-            # 保存商品信息到数据库
-            await self.save_item_info_to_db(item_id, search_text)
+            # 保存商品信息到数据库（需要有商品标题才保存）
+            # 尝试获取商品标题
+            item_title_for_save = None
+            try:
+                from db_manager import db_manager
+                db_item_info = db_manager.get_item_info(self.cookie_id, item_id)
+                if db_item_info:
+                    item_title_for_save = db_item_info.get('item_title', '').strip()
+            except:
+                pass
+
+            # 如果有商品标题，则保存商品信息
+            if item_title_for_save:
+                await self.save_item_info_to_db(item_id, search_text, item_title_for_save)
+            else:
+                logger.debug(f"跳过保存商品信息：缺少商品标题 - {item_id}")
 
             # 详细的匹配结果日志
             if rule.get('is_multi_spec'):
@@ -2457,9 +2482,8 @@ class XianyuLive:
                         reply = await self.get_default_reply(send_user_name, send_user_id, send_message)
                         reply_source = '默认'  # 标记为默认回复
 
-            # 保存商品信息到数据库（记录通知时传递的item_id）
-            if item_id:
-                await self.save_item_info_to_db(item_id, None)
+            # 注意：这里只有商品ID，没有标题和详情，根据新的规则不保存到数据库
+            # 商品信息会在其他有完整信息的地方保存（如发货规则匹配时）
             # 发送通知
             await self.send_notification(send_user_name, send_user_id, send_message, item_id)
 

@@ -1100,6 +1100,112 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
+    /* 扫码登录按钮特殊样式 */
+    .qr-login-btn {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      border: none;
+      box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .qr-login-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
+      background: linear-gradient(135deg, #218838 0%, #1ea085 100%);
+    }
+
+    .qr-login-btn:active {
+      transform: translateY(0);
+    }
+
+    .qr-login-btn::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+      transition: left 0.5s;
+    }
+
+    .qr-login-btn:hover::before {
+      left: 100%;
+    }
+
+    /* 二维码容器样式 */
+    .qr-code-wrapper {
+      border: 3px solid #28a745;
+      box-shadow: 0 4px 15px rgba(40, 167, 69, 0.2);
+      transition: all 0.3s ease;
+    }
+
+    .qr-code-wrapper:hover {
+      box-shadow: 0 6px 20px rgba(40, 167, 69, 0.3);
+    }
+
+    /* 步骤指引样式 */
+    .step-item {
+      text-align: center;
+    }
+
+    .step-number {
+      font-weight: bold;
+      font-size: 14px;
+      box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+    }
+
+    /* 手动输入按钮样式 */
+    .manual-input-btn {
+      transition: all 0.3s ease;
+    }
+
+    .manual-input-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(108, 117, 125, 0.2);
+    }
+
+    /* 等待提示样式 */
+    .bg-light-warning {
+      background-color: #fff3cd !important;
+    }
+
+    .qr-loading-tip {
+      animation: pulse-warning 2s infinite;
+    }
+
+    @keyframes pulse-warning {
+      0% {
+        opacity: 0.8;
+      }
+      50% {
+        opacity: 1;
+      }
+      100% {
+        opacity: 0.8;
+      }
+    }
+
+    /* 响应式调整 */
+    @media (max-width: 768px) {
+      .qr-login-btn, .manual-input-btn {
+        margin-bottom: 10px;
+        font-size: 0.9rem;
+      }
+
+      .step-item {
+        margin-bottom: 15px;
+      }
+
+      .step-number {
+        width: 25px !important;
+        height: 25px !important;
+        font-size: 12px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1300,25 +1406,55 @@
       <div class="content-body">
         <!-- 添加Cookie卡片 -->
         <div class="card mb-4">
-          <div class="card-header d-flex justify-content-between align-items-center">
+          <div class="card-header">
             <span><i class="bi bi-plus-circle me-2"></i>添加新账号</span>
           </div>
           <div class="card-body">
-            <form id="addForm" class="row g-3">
-              <div class="col-md-3">
-                <label for="cookieId" class="form-label">账号ID</label>
-                <input type="text" class="form-control" id="cookieId" placeholder="唯一标识" required>
-              </div>
-              <div class="col-md-9">
-                <label for="cookieValue" class="form-label">Cookie值</label>
-                <input type="text" class="form-control" id="cookieValue" placeholder="完整Cookie字符串" required>
-              </div>
+            <!-- 添加方式选择 -->
+            <div class="row mb-4">
               <div class="col-12">
-                <button type="submit" class="btn btn-primary">
-                  <i class="bi bi-plus-lg me-1"></i>添加账号
-                </button>
+                <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                  <button type="button" class="btn btn-success btn-lg me-md-2 flex-fill qr-login-btn" onclick="showQRCodeLogin()" style="max-width: 300px;">
+                    <i class="bi bi-qr-code me-2"></i>
+                    <span class="fw-bold">扫码登录</span>
+                    <br>
+                    <small class="opacity-75">推荐方式，安全便捷</small>
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary btn-lg flex-fill manual-input-btn" onclick="toggleManualInput()" style="max-width: 300px;">
+                    <i class="bi bi-keyboard me-2"></i>
+                    <span class="fw-bold">手动输入</span>
+                    <br>
+                    <small class="opacity-75">输入Cookie信息</small>
+                  </button>
+                </div>
               </div>
-            </form>
+            </div>
+
+            <!-- 手动输入表单（默认隐藏） -->
+            <div id="manualInputForm" style="display: none;">
+              <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>提示：</strong>推荐使用扫码登录，更加安全便捷。如需手动输入，请确保Cookie信息的准确性。
+              </div>
+              <form id="addForm" class="row g-3">
+                <div class="col-md-3">
+                  <label for="cookieId" class="form-label">账号ID</label>
+                  <input type="text" class="form-control" id="cookieId" placeholder="唯一标识" required>
+                </div>
+                <div class="col-md-9">
+                  <label for="cookieValue" class="form-label">Cookie值</label>
+                  <input type="text" class="form-control" id="cookieValue" placeholder="完整Cookie字符串" required>
+                </div>
+                <div class="col-12">
+                  <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-plus-lg me-1"></i>添加账号
+                  </button>
+                  <button type="button" class="btn btn-secondary ms-2" onclick="toggleManualInput()">
+                    <i class="bi bi-x-circle me-1"></i>取消
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
 
@@ -2064,6 +2200,85 @@
 
   </div> <!-- 结束 main-content -->
 
+  <!-- 扫码登录模态框 -->
+  <div class="modal fade" id="qrCodeLoginModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white">
+          <h5 class="modal-title">
+            <i class="bi bi-qr-code me-2"></i>扫码登录闲鱼账号
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body text-center py-4">
+          <!-- 步骤指引 -->
+          <div class="row mb-4">
+            <div class="col-12">
+              <div class="d-flex justify-content-center align-items-center">
+                <div class="step-item me-3">
+                  <div class="step-number bg-success text-white rounded-circle d-inline-flex align-items-center justify-content-center" style="width: 30px; height: 30px;">1</div>
+                  <small class="d-block mt-1">打开闲鱼APP</small>
+                </div>
+                <i class="bi bi-arrow-right text-muted me-3"></i>
+                <div class="step-item me-3">
+                  <div class="step-number bg-success text-white rounded-circle d-inline-flex align-items-center justify-content-center" style="width: 30px; height: 30px;">2</div>
+                  <small class="d-block mt-1">扫描二维码</small>
+                </div>
+                <i class="bi bi-arrow-right text-muted me-3"></i>
+                <div class="step-item">
+                  <div class="step-number bg-success text-white rounded-circle d-inline-flex align-items-center justify-content-center" style="width: 30px; height: 30px;">3</div>
+                  <small class="d-block mt-1">自动添加账号</small>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 二维码区域 -->
+          <div id="qrCodeContainer">
+            <div class="spinner-border text-success mb-3" role="status" style="width: 3rem; height: 3rem;">
+              <span class="visually-hidden">生成二维码中...</span>
+            </div>
+            <p class="text-muted fs-5 mb-2">正在生成二维码...</p>
+            <div class="alert alert-warning border-0 bg-light-warning d-inline-block qr-loading-tip">
+              <i class="bi bi-clock me-2 text-warning"></i>
+              <small class="text-warning fw-bold">二维码生成较慢，请耐心等待</small>
+            </div>
+          </div>
+          <div id="qrCodeImage" style="display: none;">
+            <div class="qr-code-wrapper p-3 bg-light rounded-3 d-inline-block mb-3">
+              <img id="qrCodeImg" src="" alt="登录二维码" class="img-fluid" style="max-width: 280px;">
+            </div>
+            <h6 class="text-success mb-2">
+              <i class="bi bi-phone me-2"></i>请使用闲鱼APP扫描二维码
+            </h6>
+            <div class="alert alert-info border-0 bg-light">
+              <i class="bi bi-info-circle me-2 text-info"></i>
+              <small>扫码后请等待页面提示，系统会自动获取并保存您的账号信息</small>
+            </div>
+          </div>
+
+          <!-- 状态显示 -->
+          <div id="qrCodeStatus" class="mt-3">
+            <div class="d-flex align-items-center justify-content-center">
+              <div class="spinner-border spinner-border-sm text-success me-2" role="status" style="display: none;" id="statusSpinner">
+                <span class="visually-hidden">检查中...</span>
+              </div>
+              <span id="statusText" class="text-muted">等待扫码...</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer bg-light">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+            <i class="bi bi-x-circle me-1"></i>关闭
+          </button>
+          <button type="button" class="btn btn-success" onclick="refreshQRCode()" id="refreshQRBtn">
+            <i class="bi bi-arrow-clockwise me-1"></i>重新生成二维码
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 编辑通知渠道模态框 -->
   <div class="modal fade" id="editChannelModal" tabindex="-1">
     <div class="modal-dialog">
@@ -2718,19 +2933,22 @@
                   const keywordsData = await keywordsResponse.json();
                   return {
                     ...account,
-                    keywords: keywordsData
+                    keywords: keywordsData,
+                    keywordCount: keywordsData.length
                   };
                 } else {
                   return {
                     ...account,
-                    keywords: []
+                    keywords: [],
+                    keywordCount: 0
                   };
                 }
               } catch (error) {
                 console.error(`获取账号 ${account.id} 关键词失败:`, error);
                 return {
                   ...account,
-                  keywords: []
+                  keywords: [],
+                  keywordCount: 0
                 };
               }
             })
@@ -2744,7 +2962,7 @@
           let enabledAccounts = 0;
 
           accountsWithKeywords.forEach(account => {
-            const keywordCount = account.keywords ? account.keywords.length : 0;
+            const keywordCount = account.keywordCount || 0;
             const isEnabled = account.enabled === undefined ? true : account.enabled;
 
             if (isEnabled) {
@@ -2795,7 +3013,7 @@
       }
 
       accounts.forEach(account => {
-        const keywordCount = account.keywords ? account.keywords.length : 0;
+        const keywordCount = account.keywordCount || 0;
         const isEnabled = account.enabled === undefined ? true : account.enabled;
 
         let status = '';
@@ -2826,7 +3044,7 @@
       });
     }
 
-    // 获取账号关键词数量（带缓存）
+    // 获取账号关键词数量（带缓存）- 包含普通关键词和商品关键词
     async function getAccountKeywordCount(accountId) {
       const now = Date.now();
 
@@ -2844,6 +3062,7 @@
 
         if (response.ok) {
           const keywordsData = await response.json();
+          // 现在API返回的是包含普通关键词和商品关键词的完整列表
           const count = keywordsData.length;
 
           // 更新缓存
@@ -2897,6 +3116,7 @@
                   const keywordsData = await keywordsResponse.json();
                   return {
                     ...account,
+                    keywords: keywordsData,
                     keywordCount: keywordsData.length
                   };
                 } else {
@@ -7584,6 +7804,201 @@
         document.querySelector('#importProgress .progress-bar').style.width = '0%';
         showToast('导入关键词失败', 'error');
       }
+    }
+
+    // ========================= 账号添加相关函数 =========================
+
+    // 切换手动输入表单显示/隐藏
+    function toggleManualInput() {
+      const manualForm = document.getElementById('manualInputForm');
+      if (manualForm.style.display === 'none') {
+        manualForm.style.display = 'block';
+        // 清空表单
+        document.getElementById('addForm').reset();
+      } else {
+        manualForm.style.display = 'none';
+      }
+    }
+
+    // ========================= 扫码登录相关函数 =========================
+
+    let qrCodeCheckInterval = null;
+    let qrCodeSessionId = null;
+
+    // 显示扫码登录模态框
+    function showQRCodeLogin() {
+      const modal = new bootstrap.Modal(document.getElementById('qrCodeLoginModal'));
+      modal.show();
+
+      // 模态框显示后生成二维码
+      modal._element.addEventListener('shown.bs.modal', function () {
+        generateQRCode();
+      });
+
+      // 模态框关闭时清理定时器
+      modal._element.addEventListener('hidden.bs.modal', function () {
+        clearQRCodeCheck();
+      });
+    }
+
+    // 刷新二维码（兼容旧函数名）
+    async function refreshQRCode() {
+      await generateQRCode();
+    }
+
+    // 生成二维码
+    async function generateQRCode() {
+      try {
+        showQRCodeLoading();
+
+        const response = await fetch(`${apiBase}/qr-login/generate`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            qrCodeSessionId = data.session_id;
+            showQRCodeImage(data.qr_code_url);
+            startQRCodeCheck();
+          } else {
+            showQRCodeError(data.message || '生成二维码失败');
+          }
+        } else {
+          showQRCodeError('生成二维码失败');
+        }
+      } catch (error) {
+        console.error('生成二维码失败:', error);
+        showQRCodeError('网络错误，请重试');
+      }
+    }
+
+    // 显示二维码加载状态
+    function showQRCodeLoading() {
+      document.getElementById('qrCodeContainer').style.display = 'block';
+      document.getElementById('qrCodeImage').style.display = 'none';
+      document.getElementById('statusText').textContent = '正在生成二维码，请耐心等待...';
+      document.getElementById('statusSpinner').style.display = 'none';
+    }
+
+    // 显示二维码图片
+    function showQRCodeImage(qrCodeUrl) {
+      document.getElementById('qrCodeContainer').style.display = 'none';
+      document.getElementById('qrCodeImage').style.display = 'block';
+      document.getElementById('qrCodeImg').src = qrCodeUrl;
+      document.getElementById('statusText').textContent = '等待扫码...';
+      document.getElementById('statusSpinner').style.display = 'none';
+    }
+
+    // 显示二维码错误
+    function showQRCodeError(message) {
+      document.getElementById('qrCodeContainer').innerHTML = `
+        <div class="text-danger">
+          <i class="bi bi-exclamation-triangle fs-1 mb-3"></i>
+          <p>${message}</p>
+        </div>
+      `;
+      document.getElementById('qrCodeImage').style.display = 'none';
+      document.getElementById('statusText').textContent = '生成失败';
+      document.getElementById('statusSpinner').style.display = 'none';
+    }
+
+    // 开始检查二维码状态
+    function startQRCodeCheck() {
+      if (qrCodeCheckInterval) {
+        clearInterval(qrCodeCheckInterval);
+      }
+
+      document.getElementById('statusSpinner').style.display = 'inline-block';
+      document.getElementById('statusText').textContent = '等待扫码...';
+
+      qrCodeCheckInterval = setInterval(checkQRCodeStatus, 2000); // 每2秒检查一次
+    }
+
+    // 检查二维码状态
+    async function checkQRCodeStatus() {
+      if (!qrCodeSessionId) return;
+
+      try {
+        const response = await fetch(`${apiBase}/qr-login/check/${qrCodeSessionId}`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+
+          switch (data.status) {
+            case 'waiting':
+              document.getElementById('statusText').textContent = '等待扫码...';
+              break;
+            case 'scanned':
+              document.getElementById('statusText').textContent = '已扫码，请在手机上确认...';
+              break;
+            case 'success':
+              document.getElementById('statusText').textContent = '登录成功！';
+              document.getElementById('statusSpinner').style.display = 'none';
+              clearQRCodeCheck();
+              handleQRCodeSuccess(data);
+              break;
+            case 'expired':
+              document.getElementById('statusText').textContent = '二维码已过期';
+              document.getElementById('statusSpinner').style.display = 'none';
+              clearQRCodeCheck();
+              showQRCodeError('二维码已过期，请刷新重试');
+              break;
+            case 'cancelled':
+              document.getElementById('statusText').textContent = '用户取消登录';
+              document.getElementById('statusSpinner').style.display = 'none';
+              clearQRCodeCheck();
+              break;
+          }
+        }
+      } catch (error) {
+        console.error('检查二维码状态失败:', error);
+      }
+    }
+
+    // 处理扫码成功
+    function handleQRCodeSuccess(data) {
+      if (data.account_info) {
+        const { account_id, is_new_account } = data.account_info;
+
+        if (is_new_account) {
+          showToast(`新账号添加成功！账号ID: ${account_id}`, 'success');
+        } else {
+          showToast(`账号Cookie已更新！账号ID: ${account_id}`, 'success');
+        }
+
+        // 关闭模态框
+        setTimeout(() => {
+          const modal = bootstrap.Modal.getInstance(document.getElementById('qrCodeLoginModal'));
+          modal.hide();
+
+          // 刷新账号列表
+          loadCookies();
+        }, 2000);
+      }
+    }
+
+    // 清理二维码检查
+    function clearQRCodeCheck() {
+      if (qrCodeCheckInterval) {
+        clearInterval(qrCodeCheckInterval);
+        qrCodeCheckInterval = null;
+      }
+      qrCodeSessionId = null;
+    }
+
+    // 刷新二维码
+    function refreshQRCode() {
+      clearQRCodeCheck();
+      generateQRCode();
     }
 
   </script>
