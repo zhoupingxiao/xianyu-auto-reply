@@ -206,7 +206,7 @@
     </div>
     </div> <!-- 结束 mainContent -->
 
-    <script src="/lib/bootstrap/bootstrap.bundle.min.js"></script>
+    <script src="/static/lib/bootstrap/bootstrap.bundle.min.js"></script>
     <script>
         // 全局变量
         let currentPage = 1;
@@ -571,7 +571,11 @@
             displayCurrentPage();
         }
 
-        // 显示当前页数据
+        } // 结束 initializePage 函数
+
+        // ========================= 全局函数 =========================
+
+        // 显示当前页数据（全局函数）
         function displayCurrentPage() {
             const resultsContainer = document.getElementById('searchResults');
 
@@ -623,12 +627,134 @@
             resultsContainer.innerHTML = items.map(item => createItemCard(item)).join('');
         }
 
-        // 创建商品卡片HTML
+
+
+
+
+
+
+
+
+        // 更新分页提示（保留原有功能）
+        function updatePagination() {
+            const paginationContainer = document.getElementById('paginationContainer');
+            const pagination = document.getElementById('pagination');
+
+            // 显示页码选择提示
+            paginationContainer.style.display = 'block';
+
+            let paginationHtml = `
+                <li class="page-item disabled">
+                    <span class="page-link">
+                        <i class="bi bi-info-circle me-2"></i>
+                        要查看其他页面，请在上方选择页码后重新搜索
+                    </span>
+                </li>
+            `;
+
+            pagination.innerHTML = paginationHtml;
+        } // 结束 initializePage 函数
+
+        // ========================= 全局函数 =========================
+
+        // 跳转到指定页（全局函数，供分页按钮调用）
+        function goToPage(page) {
+            currentPage = page;
+            displayCurrentPage();
+            updateFrontendPagination();
+
+            // 更新统计信息
+            updateStatsDisplay();
+
+            // 滚动到页面顶部
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // 更新统计信息显示（全局函数）
+        function updateStatsDisplay() {
+            const statsText = document.getElementById('statsText');
+            let dataSource = '';
+
+            if (allItems.length > 0) {
+                dataSource = ' [真实数据]';
+            }
+
+            const totalPages = Math.ceil(allItems.length / currentPageSize);
+            statsText.textContent = `搜索"${currentKeyword}"，共获取 ${allItems.length} 个商品${dataSource}，当前显示第 ${currentPage}/${totalPages} 页（每页${currentPageSize}条）`;
+        }
+
+        // 更新前端分页（全局函数）
+        function updateFrontendPagination() {
+            const totalPages = Math.ceil(allItems.length / currentPageSize);
+            const paginationContainer = document.getElementById('paginationContainer');
+            const pagination = document.getElementById('pagination');
+
+            if (totalPages <= 1) {
+                paginationContainer.style.display = 'none';
+                return;
+            }
+
+            paginationContainer.style.display = 'block';
+
+            let paginationHtml = '';
+
+            // 上一页
+            if (currentPage > 1) {
+                paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${currentPage - 1}); return false;">上一页</a></li>`;
+            }
+
+            // 页码显示逻辑
+            if (totalPages <= 7) {
+                // 如果总页数不超过7页，显示所有页码
+                for (let i = 1; i <= totalPages; i++) {
+                    const active = i === currentPage ? 'active' : '';
+                    paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i}); return false;">${i}</a></li>`;
+                }
+            } else {
+                // 如果总页数超过7页，使用省略号显示
+                if (currentPage <= 4) {
+                    // 当前页在前面，显示 1 2 3 4 5 ... 最后页
+                    for (let i = 1; i <= 5; i++) {
+                        const active = i === currentPage ? 'active' : '';
+                        paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i}); return false;">${i}</a></li>`;
+                    }
+                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${totalPages}); return false;">${totalPages}</a></li>`;
+                } else if (currentPage >= totalPages - 3) {
+                    // 当前页在后面，显示 1 ... 倒数5页
+                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(1); return false;">1</a></li>`;
+                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+                    for (let i = totalPages - 4; i <= totalPages; i++) {
+                        const active = i === currentPage ? 'active' : '';
+                        paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i}); return false;">${i}</a></li>`;
+                    }
+                } else {
+                    // 当前页在中间，显示 1 ... 当前页前后2页 ... 最后页
+                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(1); return false;">1</a></li>`;
+                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+                    for (let i = currentPage - 2; i <= currentPage + 2; i++) {
+                        const active = i === currentPage ? 'active' : '';
+                        paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i}); return false;">${i}</a></li>`;
+                    }
+                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${totalPages}); return false;">${totalPages}</a></li>`;
+                }
+            }
+
+            // 下一页
+            if (currentPage < totalPages) {
+                paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${currentPage + 1}); return false;">下一页</a></li>`;
+            }
+
+            pagination.innerHTML = paginationHtml;
+        }
+
+        // 创建商品卡片HTML（全局函数）
         function createItemCard(item) {
             const tags = item.tags ? item.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('') : '';
             const imageUrl = item.main_image || 'https://via.placeholder.com/200x200?text=暂无图片';
             const wantCount = item.want_count || 0;
-            
+
             return `
                 <div class="col-md-6 col-lg-4 col-xl-3 mb-4">
                     <div class="card item-card h-100">
@@ -667,120 +793,49 @@
             `;
         }
 
-
-
-
-
-        // 更新前端分页
-        function updateFrontendPagination() {
-            const totalPages = Math.ceil(allItems.length / currentPageSize);
-            const paginationContainer = document.getElementById('paginationContainer');
-            const pagination = document.getElementById('pagination');
-
-            if (totalPages <= 1) {
-                paginationContainer.style.display = 'none';
+        // 显示商品详情（全局函数）
+        function showItemDetail(itemId) {
+            // 查找对应的商品数据
+            const item = allItems.find(i => i.item_id === itemId);
+            if (!item) {
+                alert('商品信息不存在');
                 return;
             }
 
-            paginationContainer.style.display = 'block';
-
-            let paginationHtml = '';
-
-            // 上一页
-            if (currentPage > 1) {
-                paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${currentPage - 1})">上一页</a></li>`;
-            }
-
-            // 页码显示逻辑
-            if (totalPages <= 7) {
-                // 如果总页数不超过7页，显示所有页码
-                for (let i = 1; i <= totalPages; i++) {
-                    const active = i === currentPage ? 'active' : '';
-                    paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i})">${i}</a></li>`;
-                }
-            } else {
-                // 如果总页数超过7页，使用省略号显示
-                if (currentPage <= 4) {
-                    // 当前页在前面，显示 1 2 3 4 5 ... 最后页
-                    for (let i = 1; i <= 5; i++) {
-                        const active = i === currentPage ? 'active' : '';
-                        paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i})">${i}</a></li>`;
-                    }
-                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
-                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${totalPages})">${totalPages}</a></li>`;
-                } else if (currentPage >= totalPages - 3) {
-                    // 当前页在后面，显示 1 ... 倒数5页
-                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(1)">1</a></li>`;
-                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
-                    for (let i = totalPages - 4; i <= totalPages; i++) {
-                        const active = i === currentPage ? 'active' : '';
-                        paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i})">${i}</a></li>`;
-                    }
-                } else {
-                    // 当前页在中间，显示 1 ... 当前页前后2页 ... 最后页
-                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(1)">1</a></li>`;
-                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
-                    for (let i = currentPage - 2; i <= currentPage + 2; i++) {
-                        const active = i === currentPage ? 'active' : '';
-                        paginationHtml += `<li class="page-item ${active}"><a class="page-link" href="#" onclick="goToPage(${i})">${i}</a></li>`;
-                    }
-                    paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
-                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${totalPages})">${totalPages}</a></li>`;
-                }
-            }
-
-            // 下一页
-            if (currentPage < totalPages) {
-                paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="goToPage(${currentPage + 1})">下一页</a></li>`;
-            }
-
-            pagination.innerHTML = paginationHtml;
-        }
-
-        // 跳转到指定页
-        function goToPage(page) {
-            currentPage = page;
-            displayCurrentPage();
-            updateFrontendPagination();
-
-            // 更新统计信息
-            updateStatsDisplay();
-        }
-
-        // 更新统计信息显示
-        function updateStatsDisplay() {
-            const statsText = document.getElementById('statsText');
-            let dataSource = '';
-
-            if (allItems.length > 0) {
-                dataSource = ' [真实数据]';
-            }
-
-            const totalPages = Math.ceil(allItems.length / currentPageSize);
-            statsText.textContent = `搜索"${currentKeyword}"，共获取 ${allItems.length} 个商品${dataSource}，当前显示第 ${currentPage}/${totalPages} 页（每页${currentPageSize}条）`;
-        }
-
-        // 更新分页提示（保留原有功能）
-        function updatePagination() {
-            const paginationContainer = document.getElementById('paginationContainer');
-            const pagination = document.getElementById('pagination');
-
-            // 显示页码选择提示
-            paginationContainer.style.display = 'block';
-
-            let paginationHtml = `
-                <li class="page-item disabled">
-                    <span class="page-link">
-                        <i class="bi bi-info-circle me-2"></i>
-                        要查看其他页面，请在上方选择页码后重新搜索
-                    </span>
-                </li>
+            // 填充模态框内容
+            const modalBody = document.querySelector('#itemDetailModal .modal-body');
+            modalBody.innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <img src="${escapeHtml(item.main_image || 'https://via.placeholder.com/400x400?text=暂无图片')}"
+                             class="img-fluid rounded" alt="${escapeHtml(item.title)}"
+                             onerror="this.src='https://via.placeholder.com/400x400?text=图片加载失败'">
+                    </div>
+                    <div class="col-md-6">
+                        <h5>${escapeHtml(item.title)}</h5>
+                        <p class="text-primary fs-4 fw-bold">${escapeHtml(item.price)}</p>
+                        <p><strong>卖家：</strong>${escapeHtml(item.seller_name)}</p>
+                        ${item.want_count ? `<p><strong>想要人数：</strong>${item.want_count}人</p>` : ''}
+                        ${item.publish_time ? `<p><strong>发布时间：</strong>${escapeHtml(item.publish_time)}</p>` : ''}
+                        ${item.tags && item.tags.length > 0 ? `
+                            <p><strong>标签：</strong></p>
+                            <div class="mb-3">
+                                ${item.tags.map(tag => `<span class="badge bg-secondary me-1">${escapeHtml(tag)}</span>`).join('')}
+                            </div>
+                        ` : ''}
+                        <p><strong>商品链接：</strong></p>
+                        <a href="${escapeHtml(item.item_url)}" target="_blank" class="btn btn-primary">
+                            <i class="bi bi-link-45deg me-1"></i>
+                            在闲鱼中查看
+                        </a>
+                    </div>
+                </div>
             `;
 
-            pagination.innerHTML = paginationHtml;
+            // 显示模态框
+            const modal = new bootstrap.Modal(document.getElementById('itemDetailModal'));
+            modal.show();
         }
-
-        } // 结束 initializePage 函数
     </script>
 </body>
 </html>
