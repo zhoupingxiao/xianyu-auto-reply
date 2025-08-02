@@ -3,7 +3,9 @@
 [![GitHub](https://img.shields.io/badge/GitHub-zhinianboke%2Fxianyu--auto--reply-blue?logo=github)](https://github.com/zhinianboke/xianyu-auto-reply)
 [![Docker](https://img.shields.io/badge/Docker-一键部署-blue?logo=docker)](https://github.com/zhinianboke/xianyu-auto-reply#-快速开始)
 [![Python](https://img.shields.io/badge/Python-3.11+-green?logo=python)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-仅供学习-red.svg)](#️-版权声明与使用条款)
+
+> **⚠️ 重要提示：本项目仅供学习研究使用，严禁商业用途！使用前请仔细阅读[版权声明](#️-版权声明与使用条款)。**
 
 一个功能完整的闲鱼自动回复和管理系统，支持多用户、多账号管理，具备智能回复、自动发货、自动确认发货、商品管理等企业级功能。
 
@@ -72,6 +74,9 @@
 
 ## 📁 项目结构
 
+<details>
+<summary>点击展开查看详细项目结构</summary>
+
 ```
 xianyu-auto-reply/
 ├── 📄 核心文件
@@ -118,6 +123,8 @@ xianyu-auto-reply/
     ├── backups/                  # 数据备份文件
     └── realtime.log              # 实时日志文件
 ```
+
+</details>
 
 ## 🚀 快速开始
 
@@ -314,19 +321,6 @@ docker rm -f xianyu-auto-reply
 - **默认密码**：`admin123`
 - **初始化机制**：首次创建数据库时自动创建admin用户
 
-#### 修改密码方式
-
-**方式一：Web界面修改（推荐）**
-1. 使用默认密码登录系统
-2. 进入系统设置页面
-3. 在"修改密码"区域输入当前密码和新密码
-4. 点击"修改密码"按钮完成修改
-
-**密码管理机制**：
-- 数据库初始化时创建admin用户，密码为 `admin123`
-- 重启时如果用户表已存在，不重新初始化
-- 所有用户（包括admin）统一使用用户表验证
-- 密码修改后立即生效，无需重启
 
 ### 全局配置文件
 `global_config.yml` 包含详细的系统配置，支持：
@@ -363,23 +357,6 @@ docker rm -f xianyu-auto-reply
 - **日志文件**：`logs/` 目录下的按日期分割的日志文件
 - **日志级别**：支持DEBUG、INFO、WARNING、ERROR级别
 
-### 数据备份
-```bash
-# 手动备份
-./docker-deploy.sh backup
-
-# 查看备份
-ls backups/
-```
-
-### 健康检查
-```bash
-# 检查服务状态
-curl http://localhost:8080/health
-
-# 查看系统状态
-./docker-deploy.sh status
-```
 
 ## 🔒 安全特性
 
@@ -434,19 +411,9 @@ curl http://localhost:8080/health
 - 推送分支：`git push origin feature/your-feature`
 - 提交 Pull Request
 
-### 📖 文档贡献
-- 改进现有文档
-- 添加使用示例
-- 翻译文档到其他语言
 
 ## 📞 技术支持
 
-### 🔧 故障排除
-
-**1. 问题排查**
-1. 查看日志：`docker-compose logs -f`
-2. 检查状态：`./docker-deploy.sh status`
-3. 健康检查：`curl http://localhost:8080/health`
 
 ### 💬 交流群组
 
@@ -469,9 +436,71 @@ curl http://localhost:8080/health
 
 - **[XianYuApis](https://github.com/cv-cat/XianYuApis)** - 提供了闲鱼API接口的技术参考
 - **[XianyuAutoAgent](https://github.com/shaxiu/XianyuAutoAgent)** - 提供了自动化处理的实现思路
+- **[myfish](https://github.com/Kaguya233qwq/myfish)** - 提供了扫码登录的实现思路
+
 
 感谢这些优秀的开源项目为本项目的开发提供了宝贵的参考和启发！
+
+## ⚖️ 版权声明与使用条款
+
+### 📋 重要声明
+
+**本项目仅供学习和研究使用，严禁商业用途！**
+
+### 🚫 使用限制
+
+- ❌ **禁止商业使用** - 本项目及其衍生作品不得用于任何商业目的
+- ❌ **禁止销售** - 不得以任何形式销售本项目或基于本项目的服务
+- ❌ **禁止盈利** - 不得通过本项目进行任何形式的盈利活动
+- ❌ **禁止违法使用** - 不得将本项目用于任何违法违规活动
+
+### ✅ 允许使用
+
+- ✅ **学习研究** - 可用于个人学习和技术研究
+- ✅ **非商业分享** - 可在非商业环境下分享和讨论
+- ✅ **开源贡献** - 欢迎为项目贡献代码和改进
+
+### 📝 使用要求
+
+如果您使用、修改或分发本项目，必须：
+
+1. **保留原作者信息** - 必须在显著位置标注原作者和项目来源
+2. **保留版权声明** - 不得删除或修改本版权声明
+3. **注明修改内容** - 如有修改，需明确标注修改部分
+4. **遵守开源协议** - 严格遵守项目的开源许可协议
+
+### 👤 原作者信息
+
+- **项目作者**：zhinianboke
+- **项目地址**：https://github.com/zhinianboke/xianyu-auto-reply
+- **联系方式**：通过GitHub Issues或项目交流群
+
+### ⚠️ 免责声明
+
+1. **使用风险自负** - 使用本项目产生的任何风险由使用者自行承担
+2. **无质量保证** - 本项目按"现状"提供，不提供任何明示或暗示的保证
+3. **责任限制** - 作者不对使用本项目造成的任何损失承担责任
+4. **合规使用** - 使用者需确保使用行为符合当地法律法规
+
+### 📞 侵权处理
+
+如发现本项目存在侵权内容，请通过以下方式联系：
+
+- **GitHub Issues**：https://github.com/zhinianboke/xianyu-auto-reply/issues
+- **邮箱联系**：在项目交流群中获取联系方式
+
+我们将在收到通知后**立即处理**并删除相关内容。
+
+### 🤝 合作与授权
+
+如需商业使用或特殊授权，请通过项目交流群联系作者进行协商。
+
+---
+
+**⚖️ 使用本项目即表示您已阅读、理解并同意遵守以上所有条款。**
 
 ---
 
 🎉 **开始使用闲鱼自动回复系统，让您的闲鱼店铺管理更加智能高效！**
+
+**请记住：仅限学习使用，禁止商业用途！**
