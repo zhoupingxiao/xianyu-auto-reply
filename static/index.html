@@ -1886,6 +1886,33 @@
           </div>
         </div>
 
+        <div class="card mb-4">
+          <div class="card-header">
+            <span><i class="bi bi-plus-circle me-2"></i>添加钉钉通知渠道</span>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <i class="bi bi-info-circle me-2"></i>
+              <strong>使用说明：</strong>请设置钉钉机器人Webhook URL
+            </div>
+            <form id="addDingTalkChannelForm" class="row g-3">
+              <div class="col-md-4">
+                <label for="dingTalkChannelName" class="form-label">渠道名称</label>
+                <input type="text" class="form-control" id="dingTalkChannelName" placeholder="例如：我的钉钉通知" required>
+              </div>
+              <div class="col-md-4">
+                <label for="dingTalkWebHook" class="form-label">钉钉机器人Webhook URL</label>
+                <input type="text" class="form-control" id="dingTalkWebHook" placeholder="输入钉钉机器人Webhook URL" required>
+              </div>
+              <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary">
+                  <i class="bi bi-plus-lg me-1"></i>添加渠道
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
         <!-- 通知渠道列表 -->
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
@@ -2298,8 +2325,8 @@
               <input type="text" class="form-control" id="editChannelName" placeholder="例如：我的QQ通知" required>
             </div>
             <div class="mb-3">
-              <label for="editChannelQQ" class="form-label">接收QQ号码 <span class="text-danger">*</span></label>
-              <input type="text" class="form-control" id="editChannelQQ" placeholder="输入QQ号码" required>
+              <label for="editChannelQQ" class="form-label">接收QQ号码、钉钉Webhook URL <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="editChannelQQ" placeholder="输入通知方式" required>
             </div>
             <div class="mb-3">
               <div class="form-check">
@@ -4882,7 +4909,7 @@
             <td colspan="6" class="text-center py-4 text-muted">
               <i class="bi bi-bell fs-1 d-block mb-3"></i>
               <h5>暂无通知渠道</h5>
-              <p class="mb-0">请添加QQ通知渠道</p>
+              <p class="mb-0">请添加通知渠道</p>
             </td>
           </tr>
         `;
@@ -4899,7 +4926,7 @@
         tr.innerHTML = `
           <td><strong class="text-primary">${channel.id}</strong></td>
           <td>${channel.name}</td>
-          <td><span class="badge bg-info">QQ</span></td>
+          <td><span class="badge bg-info">${channel.type}</span></td>
           <td><code>${channel.config}</code></td>
           <td>${statusBadge}</td>
           <td>
@@ -4945,6 +4972,43 @@
             if (response.ok) {
               showToast('通知渠道添加成功', 'success');
               addChannelForm.reset();
+              loadNotificationChannels();
+            } else {
+              const error = await response.text();
+              showToast(`添加失败: ${error}`, 'danger');
+            }
+          } catch (error) {
+            console.error('添加通知渠道失败:', error);
+            showToast('添加通知渠道失败', 'danger');
+          }
+        });
+      }
+
+      const addDingTalkChannelForm = document.getElementById('addDingTalkChannelForm');
+      if (addDingTalkChannelForm) {
+        addDingTalkChannelForm.addEventListener('submit', async function(e) {
+          e.preventDefault();
+
+          const name = document.getElementById('dingTalkChannelName').value;
+          const dingTalkWebHook = document.getElementById('dingTalkWebHook').value;
+
+          try {
+            const response = await fetch(`${apiBase}/notification-channels`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                name: name,
+                type: 'ding_talk',
+                config: dingTalkWebHook
+              })
+            });
+
+            if (response.ok) {
+              showToast('通知渠道添加成功', 'success');
+              addDingTalkChannelForm.reset();
               loadNotificationChannels();
             } else {
               const error = await response.text();

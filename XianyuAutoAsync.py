@@ -918,10 +918,13 @@ class XianyuLive:
                 channel_config = notification.get('channel_config')
 
                 try:
-                    if channel_type == 'qq':
-                        await self._send_qq_notification(channel_config, notification_msg)
-                    else:
-                        logger.warning(f"不支持的通知渠道类型: {channel_type}")
+                    match channel_type:
+                        case 'qq':
+                            await self._send_qq_notification(channel_config, notification_msg)
+                        case 'ding_talk':
+                            await self._send_ding_talk_notification(channel_config, notification_msg)
+                        case _:
+                            logger.warning(f"不支持的通知渠道类型: {channel_type}")
 
                 except Exception as notify_error:
                     logger.error(f"发送通知失败 ({notification.get('channel_name', 'Unknown')}): {self._safe_str(notify_error)}")
@@ -957,6 +960,35 @@ class XianyuLive:
 
         except Exception as e:
             logger.error(f"发送QQ通知异常: {self._safe_str(e)}")
+
+    async def _send_ding_talk_notification(self, config: str, message: str):
+        """发送钉钉通知"""
+        try:
+            import aiohttp
+            import json
+            # 解析配置（钉钉机器人Webhook URL）
+            webhook_url = config.strip()
+            if not webhook_url:
+                logger.warning("钉钉通知配置为空")
+                return
+
+            data = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": "闲鱼自动回复通知",
+                    "text": message
+                }
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=data, timeout=10) as response:
+                    if response.status == 200:
+                        logger.info(f"钉钉通知发送成功: {webhook_url}")
+                    else:
+                        logger.warning(f"钉钉通知发送失败: {response.status}")
+            
+        except Exception as e:
+            logger.error(f"发送钉钉通知异常: {self._safe_str(e)}")
 
     async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh"):
         """发送Token刷新异常通知（带防重复机制）"""

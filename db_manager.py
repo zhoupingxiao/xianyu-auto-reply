@@ -295,6 +295,16 @@ class DBManager:
             )
             ''')
 
+            # 创建系统设置表
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                description TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
             # 创建消息通知配置表
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS message_notifications (
@@ -307,16 +317,6 @@ class DBManager:
                 FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE,
                 FOREIGN KEY (channel_id) REFERENCES notification_channels(id) ON DELETE CASCADE,
                 UNIQUE(cookie_id, channel_id)
-            )
-            ''')
-
-            # 创建系统设置表
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS system_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                description TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             ''')
 
@@ -341,6 +341,45 @@ class DBManager:
             ('theme_color', 'blue', '主题颜色')
             ''')
 
+            # 检查并升级数据库
+            self.check_and_upgrade_db(cursor)
+
+            self.conn.commit()
+            logger.info("数据库初始化完成")
+        except Exception as e:
+            logger.error(f"数据库初始化失败: {e}")
+            self.conn.rollback()
+            raise
+            
+    def check_and_upgrade_db(self, cursor):
+        """检查数据库版本并执行必要的升级"""
+        try:
+            # 获取当前数据库版本
+            current_version = self.get_system_setting("db_version") or "1.0"
+            logger.info(f"当前数据库版本: {current_version}")
+
+            if current_version == "1.0":
+                logger.info("开始升级数据库到版本1.0...")
+                self.update_admin_user_id(cursor)
+                self.set_system_setting("db_version", "1.0", "数据库版本号")
+                logger.info("数据库升级到版本1.0完成")
+            
+            # 如果版本低于需要升级的版本，执行升级
+            if current_version < "1.1":
+                logger.info("开始升级数据库到版本1.1...")
+                self.upgrade_notification_channels_table(cursor)
+                self.set_system_setting("db_version", "1.1", "数据库版本号")
+                logger.info("数据库升级到版本1.1完成")
+
+                
+        except Exception as e:
+            logger.error(f"数据库版本检查或升级失败: {e}")
+            raise
+            
+    def update_admin_user_id(self, cursor):
+        """更新admin用户ID"""
+        try:
+            logger.info("开始更新admin用户ID...")
             # 创建默认admin用户（只在首次初始化时创建）
             cursor.execute('SELECT COUNT(*) FROM users WHERE username = ?', ('admin',))
             admin_exists = cursor.fetchone()[0] > 0
@@ -438,11 +477,55 @@ class DBManager:
                 self._migrate_keywords_table_constraints(cursor)
 
             self.conn.commit()
-            logger.info(f"数据库初始化成功: {self.db_path}")
+            logger.info(f"admin用户ID更新完成")
         except Exception as e:
-            logger.error(f"数据库初始化失败: {e}")
-            if self.conn:
-                self.conn.close()
+            logger.error(f"更新admin用户ID失败: {e}")
+            raise
+            
+    def upgrade_notification_channels_table(self, cursor):
+        """升级notification_channels表的type字段约束"""
+        try:
+            logger.info("开始升级notification_channels表...")
+            
+            # 检查表是否存在
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_channels'")
+            if not cursor.fetchone():
+                logger.info("notification_channels表不存在，无需升级")
+                return True
+                
+            # 检查表中是否有数据
+            cursor.execute("SELECT COUNT(*) FROM notification_channels")
+            count = cursor.fetchone()[0]
+            
+            # 创建临时表
+            cursor.execute('''
+            CREATE TABLE notification_channels_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL CHECK (type IN ('qq','ding_talk')),
+                config TEXT NOT NULL,
+                enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # 复制数据
+            if count > 0:
+                logger.info(f"复制 {count} 条通知渠道数据到新表")
+                cursor.execute("INSERT INTO notification_channels_new SELECT * FROM notification_channels")
+            
+            # 删除旧表
+            cursor.execute("DROP TABLE notification_channels")
+            
+            # 重命名新表
+            cursor.execute("ALTER TABLE notification_channels_new RENAME TO notification_channels")
+            
+            logger.info("notification_channels表升级完成")
+            return True
+        except Exception as e:
+            logger.error(f"升级notification_channels表失败: {e}")
             raise
     
     def _migrate_keywords_table_constraints(self, cursor):
