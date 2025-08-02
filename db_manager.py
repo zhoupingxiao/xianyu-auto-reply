@@ -378,7 +378,9 @@ class DBManager:
                 self.set_system_setting("db_version", "1.2", "数据库版本号")
                 logger.info("数据库升级到版本1.2完成")
 
-                
+            # 迁移遗留数据（在所有版本升级完成后执行）
+            self.migrate_legacy_data(cursor)
+
         except Exception as e:
             logger.error(f"数据库版本检查或升级失败: {e}")
             raise
@@ -503,7 +505,10 @@ class DBManager:
             # 检查表中是否有数据
             cursor.execute("SELECT COUNT(*) FROM notification_channels")
             count = cursor.fetchone()[0]
-            
+
+            # 删除可能存在的临时表
+            cursor.execute("DROP TABLE IF EXISTS notification_channels_new")
+
             # 创建临时表
             cursor.execute('''
             CREATE TABLE notification_channels_new (
@@ -518,10 +523,53 @@ class DBManager:
             )
             ''')
             
-            # 复制数据
+            # 复制数据，并转换不兼容的类型
             if count > 0:
                 logger.info(f"复制 {count} 条通知渠道数据到新表")
-                cursor.execute("INSERT INTO notification_channels_new SELECT * FROM notification_channels")
+                # 先查看现有数据的类型
+                cursor.execute("SELECT DISTINCT type FROM notification_channels")
+                existing_types = [row[0] for row in cursor.fetchall()]
+                logger.info(f"现有通知渠道类型: {existing_types}")
+
+                # 获取所有现有数据进行逐行处理
+                cursor.execute("SELECT * FROM notification_channels")
+                existing_data = cursor.fetchall()
+
+                # 逐行转移数据，确保类型映射正确
+                for row in existing_data:
+                    old_type = row[3] if len(row) > 3 else 'qq'  # type字段，默认为qq
+
+                    # 类型映射规则
+                    type_mapping = {
+                        'dingtalk': 'ding_talk',
+                        'ding_talk': 'ding_talk',
+                        'qq': 'qq',
+                        'email': 'qq',  # 暂时映射为qq，后续版本会支持
+                        'webhook': 'qq',  # 暂时映射为qq，后续版本会支持
+                        'wechat': 'qq',  # 暂时映射为qq，后续版本会支持
+                        'telegram': 'qq'  # 暂时映射为qq，后续版本会支持
+                    }
+
+                    new_type = type_mapping.get(old_type, 'qq')  # 默认转换为qq类型
+
+                    if old_type != new_type:
+                        logger.info(f"转换通知渠道类型: {old_type} -> {new_type}")
+
+                    # 插入到新表
+                    cursor.execute('''
+                    INSERT INTO notification_channels_new
+                    (id, name, user_id, type, config, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        row[0],  # id
+                        row[1],  # name
+                        row[2],  # user_id
+                        new_type,  # type (转换后的)
+                        row[4] if len(row) > 4 else '{}',  # config
+                        row[5] if len(row) > 5 else True,  # enabled
+                        row[6] if len(row) > 6 else None,  # created_at
+                        row[7] if len(row) > 7 else None   # updated_at
+                    ))
             
             # 删除旧表
             cursor.execute("DROP TABLE notification_channels")
@@ -575,17 +623,40 @@ class DBManager:
             if existing_data:
                 logger.info(f"迁移 {len(existing_data)} 条通知渠道数据到新表")
                 for row in existing_data:
-                    # 处理类型映射：ding_talk -> dingtalk
-                    channel_type = row[3]  # type字段
-                    if channel_type == 'ding_talk':
-                        channel_type = 'dingtalk'
+                    # 处理类型映射，支持更多渠道类型
+                    old_type = row[3] if len(row) > 3 else 'qq'  # type字段
 
-                    # 插入到新表
+                    # 扩展的类型映射规则
+                    type_mapping = {
+                        'ding_talk': 'dingtalk',  # 统一为dingtalk
+                        'dingtalk': 'dingtalk',
+                        'qq': 'qq',
+                        'email': 'email',  # 现在支持email
+                        'webhook': 'webhook',  # 现在支持webhook
+                        'wechat': 'wechat',  # 现在支持wechat
+                        'telegram': 'telegram'  # 现在支持telegram
+                    }
+
+                    new_type = type_mapping.get(old_type, 'qq')  # 默认为qq
+
+                    if old_type != new_type:
+                        logger.info(f"转换通知渠道类型: {old_type} -> {new_type}")
+
+                    # 插入到新表，确保字段完整性
                     cursor.execute('''
                     INSERT INTO notification_channels_new
                     (id, name, user_id, type, config, enabled, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (row[0], row[1], row[2], channel_type, row[4], row[5], row[6], row[7]))
+                    ''', (
+                        row[0],  # id
+                        row[1],  # name
+                        row[2],  # user_id
+                        new_type,  # type (转换后的)
+                        row[4] if len(row) > 4 else '{}',  # config
+                        row[5] if len(row) > 5 else True,  # enabled
+                        row[6] if len(row) > 6 else None,  # created_at
+                        row[7] if len(row) > 7 else None   # updated_at
+                    ))
 
             # 删除旧表
             cursor.execute("DROP TABLE notification_channels")
@@ -598,6 +669,83 @@ class DBManager:
         except Exception as e:
             logger.error(f"升级notification_channels表类型失败: {e}")
             raise
+
+    def migrate_legacy_data(self, cursor):
+        """迁移遗留数据到新表结构"""
+        try:
+            logger.info("开始检查和迁移遗留数据...")
+
+            # 检查是否有需要迁移的老表
+            legacy_tables = [
+                'old_notification_channels',
+                'legacy_delivery_rules',
+                'old_keywords',
+                'backup_cookies'
+            ]
+
+            for table_name in legacy_tables:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+                if cursor.fetchone():
+                    logger.info(f"发现遗留表: {table_name}，开始迁移数据...")
+                    self._migrate_table_data(cursor, table_name)
+
+            logger.info("遗留数据迁移完成")
+            return True
+        except Exception as e:
+            logger.error(f"迁移遗留数据失败: {e}")
+            return False
+
+    def _migrate_table_data(self, cursor, table_name: str):
+        """迁移指定表的数据"""
+        try:
+            if table_name == 'old_notification_channels':
+                # 迁移通知渠道数据
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                count = cursor.fetchone()[0]
+
+                if count > 0:
+                    cursor.execute(f"SELECT * FROM {table_name}")
+                    old_data = cursor.fetchall()
+
+                    for row in old_data:
+                        # 处理数据格式转换
+                        cursor.execute('''
+                        INSERT OR IGNORE INTO notification_channels
+                        (name, user_id, type, config, enabled)
+                        VALUES (?, ?, ?, ?, ?)
+                        ''', (
+                            row[1] if len(row) > 1 else f"迁移渠道_{row[0]}",
+                            row[2] if len(row) > 2 else 1,  # 默认admin用户
+                            self._normalize_channel_type(row[3] if len(row) > 3 else 'qq'),
+                            row[4] if len(row) > 4 else '{}',
+                            row[5] if len(row) > 5 else True
+                        ))
+
+                    logger.info(f"成功迁移 {count} 条通知渠道数据")
+
+                    # 迁移完成后删除老表
+                    cursor.execute(f"DROP TABLE {table_name}")
+                    logger.info(f"已删除遗留表: {table_name}")
+
+        except Exception as e:
+            logger.error(f"迁移表 {table_name} 数据失败: {e}")
+
+    def _normalize_channel_type(self, old_type: str) -> str:
+        """标准化通知渠道类型"""
+        type_mapping = {
+            'ding_talk': 'dingtalk',
+            'dingtalk': 'dingtalk',
+            'qq': 'qq',
+            'email': 'email',
+            'webhook': 'webhook',
+            'wechat': 'wechat',
+            'telegram': 'telegram',
+            # 处理一些可能的变体
+            'dingding': 'dingtalk',
+            'weixin': 'wechat',
+            'tg': 'telegram'
+        }
+        return type_mapping.get(old_type.lower(), 'qq')
     
     def _migrate_keywords_table_constraints(self, cursor):
         """迁移keywords表的约束，支持基于商品ID的唯一性校验"""
