@@ -48,7 +48,7 @@ class QRLoginSession:
 
     def __init__(self, session_id: str):
         self.session_id = session_id
-        self.status = 'waiting'  # waiting, scanned, success, expired, cancelled
+        self.status = 'waiting'  # waiting, scanned, success, expired, cancelled, verification_required
         self.qr_code_url = None
         self.qr_content = None
         self.cookies = {}
@@ -56,6 +56,7 @@ class QRLoginSession:
         self.created_time = time.time()
         self.expire_time = 300  # 5分钟过期
         self.params = {}  # 存储登录参数
+        self.verification_url = None  # 风控验证URL
 
     def is_expired(self) -> bool:
         """检查是否过期"""
@@ -281,13 +282,14 @@ class QRLoginManager:
                             is True
                         ):
                             # 账号被风控，需要手机验证
-                            session.status = 'cancelled'
+                            session.status = 'verification_required'
                             iframe_url = (
                                 resp.json()
                                 .get("content", {})
                                 .get("data", {})
                                 .get("iframeRedirectUrl")
                             )
+                            session.verification_url = iframe_url
                             logger.warning(f"账号被风控，需要手机验证: {session_id}, URL: {iframe_url}")
                             break
                         else:
@@ -331,7 +333,7 @@ class QRLoginManager:
                     await asyncio.sleep(2)
 
             # 超时处理
-            if session.status not in ['success', 'expired', 'cancelled']:
+            if session.status not in ['success', 'expired', 'cancelled', 'verification_required']:
                 session.status = 'expired'
                 logger.info(f"二维码监控超时，标记为过期: {session_id}")
 
@@ -353,6 +355,11 @@ class QRLoginManager:
             'status': session.status,
             'session_id': session_id
         }
+
+        # 如果需要验证，返回验证URL
+        if session.status == 'verification_required' and session.verification_url:
+            result['verification_url'] = session.verification_url
+            result['message'] = '账号被风控，需要手机验证'
 
         # 如果登录成功，返回Cookie信息
         if session.status == 'success' and session.cookies and session.unb:

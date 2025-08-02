@@ -7883,6 +7883,12 @@
       document.getElementById('qrCodeImage').style.display = 'none';
       document.getElementById('statusText').textContent = '正在生成二维码，请耐心等待...';
       document.getElementById('statusSpinner').style.display = 'none';
+
+      // 隐藏验证容器
+      const verificationContainer = document.getElementById('verificationContainer');
+      if (verificationContainer) {
+        verificationContainer.style.display = 'none';
+      }
     }
 
     // 显示二维码图片
@@ -7957,10 +7963,69 @@
               document.getElementById('statusSpinner').style.display = 'none';
               clearQRCodeCheck();
               break;
+            case 'verification_required':
+              document.getElementById('statusText').textContent = '需要手机验证';
+              document.getElementById('statusSpinner').style.display = 'none';
+              clearQRCodeCheck();
+              showVerificationRequired(data);
+              break;
           }
         }
       } catch (error) {
         console.error('检查二维码状态失败:', error);
+      }
+    }
+
+    // 显示需要验证的提示
+    function showVerificationRequired(data) {
+      if (data.verification_url) {
+        // 隐藏二维码区域
+        document.getElementById('qrCodeContainer').style.display = 'none';
+        document.getElementById('qrCodeImage').style.display = 'none';
+
+        // 显示验证提示
+        const verificationHtml = `
+          <div class="text-center">
+            <div class="mb-4">
+              <i class="bi bi-shield-exclamation text-warning" style="font-size: 4rem;"></i>
+            </div>
+            <h5 class="text-warning mb-3">账号需要手机验证</h5>
+            <div class="alert alert-warning border-0 mb-4">
+              <i class="bi bi-info-circle me-2"></i>
+              <strong>检测到账号存在风控，需要进行手机验证才能完成登录</strong>
+            </div>
+            <div class="mb-4">
+              <p class="text-muted mb-3">请点击下方按钮，在新窗口中完成手机验证：</p>
+              <a href="${data.verification_url}" target="_blank" class="btn btn-warning btn-lg">
+                <i class="bi bi-phone me-2"></i>
+                打开手机验证页面
+              </a>
+            </div>
+            <div class="alert alert-info border-0">
+              <i class="bi bi-lightbulb me-2"></i>
+              <small>
+                <strong>验证步骤：</strong><br>
+                1. 点击上方按钮打开验证页面<br>
+                2. 按照页面提示完成手机验证<br>
+                3. 验证完成后，重新扫码登录
+              </small>
+            </div>
+          </div>
+        `;
+
+        // 创建验证提示容器
+        let verificationContainer = document.getElementById('verificationContainer');
+        if (!verificationContainer) {
+          verificationContainer = document.createElement('div');
+          verificationContainer.id = 'verificationContainer';
+          document.querySelector('#qrCodeLoginModal .modal-body').appendChild(verificationContainer);
+        }
+
+        verificationContainer.innerHTML = verificationHtml;
+        verificationContainer.style.display = 'block';
+
+        // 显示Toast提示
+        showToast('账号需要手机验证，请按照提示完成验证', 'warning');
       }
     }
 
