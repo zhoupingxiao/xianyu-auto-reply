@@ -2,10 +2,12 @@
 FROM python:3.11-slim
 
 # 设置标签信息
-LABEL maintainer="Xianyu Auto Reply System"
-LABEL version="2.0.0"
-LABEL description="闲鱼自动回复系统 - 企业级多用户版本"
+LABEL maintainer="zhinianboke"
+LABEL version="2.1.0"
+LABEL description="闲鱼自动回复系统 - 企业级多用户版本，支持自动发货和免拼发货"
 LABEL repository="https://github.com/zhinianboke/xianyu-auto-reply"
+LABEL license="仅供学习使用，禁止商业用途"
+LABEL author="zhinianboke"
 
 # 设置工作目录
 WORKDIR /app
@@ -14,21 +16,27 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV TZ=Asia/Shanghai
+ENV DOCKER_ENV=true
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-#更换阿里云源
+#更换中科大源
 RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources
 
 # 安装系统依赖（包括Playwright浏览器依赖）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        # 基础工具
         nodejs \
         npm \
         tzdata \
         curl \
+        ca-certificates \
+        # 图像处理依赖
         libjpeg-dev \
         libpng-dev \
         libfreetype6-dev \
         fonts-dejavu-core \
+        fonts-liberation \
         # Playwright浏览器依赖
         libnss3 \
         libnspr4 \
@@ -51,31 +59,15 @@ RUN apt-get update && \
         libx11-6 \
         libxft2 \
         libxinerama1 \
-        libxrandr2 \
-        libxss1 \
         libxtst6 \
-        ca-certificates \
-        fonts-liberation \
         libappindicator3-1 \
-        libasound2 \
-        libatk-bridge2.0-0 \
-        libdrm2 \
-        libgtk-3-0 \
-        libnspr4 \
-        libnss3 \
         libx11-xcb1 \
-        libxcomposite1 \
-        libxcursor1 \
-        libxdamage1 \
         libxfixes3 \
-        libxi6 \
-        libxrandr2 \
-        libxrender1 \
-        libxss1 \
-        libxtst6 \
         xdg-utils \
         && apt-get clean \
-        && rm -rf /var/lib/apt/lists/*
+        && rm -rf /var/lib/apt/lists/* \
+        && rm -rf /tmp/* \
+        && rm -rf /var/tmp/*
 
 # 设置时区
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
@@ -111,18 +103,22 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # 创建启动脚本
-RUN echo '#!/bin/bash' > /app/entrypoint.sh && \
-    echo 'set -e' >> /app/entrypoint.sh && \
-    echo '' >> /app/entrypoint.sh && \
-    echo 'echo "🚀 启动闲鱼自动回复系统..."' >> /app/entrypoint.sh && \
-    echo '' >> /app/entrypoint.sh && \
-    echo '# 数据库将在应用启动时自动初始化' >> /app/entrypoint.sh && \
-    echo 'echo "📊 数据库将在应用启动时自动初始化..."' >> /app/entrypoint.sh && \
-    echo '' >> /app/entrypoint.sh && \
-    echo '# 启动主应用' >> /app/entrypoint.sh && \
-    echo 'echo "🎯 启动主应用..."' >> /app/entrypoint.sh && \
-    echo 'exec python Start.py' >> /app/entrypoint.sh && \
-    chmod +x /app/entrypoint.sh
+COPY <<EOF /app/entrypoint.sh
+#!/bin/bash
+set -e
+
+echo "🚀 启动闲鱼自动回复系统..."
+echo "📊 数据库将在应用启动时自动初始化..."
+echo "🎯 启动主应用..."
+
+# 确保数据目录存在
+mkdir -p /app/data /app/logs /app/backups
+
+# 启动主应用
+exec python Start.py
+EOF
+
+RUN chmod +x /app/entrypoint.sh
 
 # 启动命令
 CMD ["/app/entrypoint.sh"]
