@@ -70,7 +70,12 @@ init_config() {
 # 构建镜像
 build_image() {
     print_info "构建 Docker 镜像..."
-    docker-compose build --no-cache
+    echo "是否需要使用国内镜像(y/n): " && read iscn
+    if [[ $iscn == "y" ]]; then
+        docker-compose -f docker-compose-cn.yml build --no-cache
+    else
+        docker-compose build --no-cache
+    fi  
     print_success "镜像构建完成"
 }
 
