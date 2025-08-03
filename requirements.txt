@@ -98,6 +98,7 @@ typing-extensions>=4.7.0
 # - copy (对象复制)
 # - pickle (对象序列化)
 # - gzip (压缩)
+# - zlib (数据压缩)
 # - zipfile (ZIP文件)
 # - tarfile (TAR文件)
 # - shutil (文件操作)

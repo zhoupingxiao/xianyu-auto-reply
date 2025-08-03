@@ -1506,6 +1506,30 @@ class XianyuLive:
             logger.error(f"【{self.cookie_id}】加密确认模块调用失败: {self._safe_str(e)}")
             return {"error": f"加密确认模块调用失败: {self._safe_str(e)}", "order_id": order_id}
 
+    async def auto_freeshipping(self, order_id, item_id, buyer_id, retry_count=0):
+        """自动免拼发货 - 使用加密模块"""
+        try:
+            logger.debug(f"【{self.cookie_id}】开始免拼发货，订单ID: {order_id}")
+
+            # 导入超级混淆加密模块
+            from secure_freeshipping_ultra import SecureFreeshipping
+
+            # 创建加密免拼发货实例
+            secure_freeshipping = SecureFreeshipping(self.session, self.cookies_str, self.cookie_id)
+
+            # 传递必要的属性
+            secure_freeshipping.current_token = self.current_token
+            secure_freeshipping.last_token_refresh_time = self.last_token_refresh_time
+            secure_freeshipping.token_refresh_interval = self.token_refresh_interval
+            secure_freeshipping.refresh_token = self.refresh_token  # 传递refresh_token方法
+
+            # 调用加密的免拼发货方法
+            return await secure_freeshipping.auto_freeshipping(order_id, item_id, buyer_id, retry_count)
+
+        except Exception as e:
+            logger.error(f"【{self.cookie_id}】加密免拼发货模块调用失败: {self._safe_str(e)}")
+            return {"error": f"加密免拼发货模块调用失败: {self._safe_str(e)}", "order_id": order_id}
+
     async def fetch_order_detail_info(self, order_id: str):
         """获取订单详情信息"""
         try:
@@ -2576,10 +2600,24 @@ class XianyuLive:
 
                     # 检查是否为"我已小刀，待刀成"
                     if card_title == "我已小刀，待刀成":
-                        logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】检测到"我已小刀，待刀成"，准备自动发货')
-                        # 使用统一的自动发货处理方法
-                        await self._handle_auto_delivery(websocket, message, send_user_name, send_user_id,
-                                                       item_id, chat_id, msg_time)
+                        logger.info(f'[{msg_time}] 【{self.cookie_id}】【系统】检测到"我已小刀，待刀成"，准备自动免拼发货')
+                        # 提取订单ID
+                        order_id = self._extract_order_id(message)
+                        if order_id:
+                            # 延迟2秒后执行免拼发货
+                            logger.info(f'[{msg_time}] 【{self.cookie_id}】延迟2秒后执行免拼发货...')
+                            await asyncio.sleep(2)
+                            # 调用自动免拼发货方法
+                            result = await self.auto_freeshipping(order_id, item_id, send_user_id)
+                            if result.get('success'):
+                                logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 自动免拼发货成功')
+                            else:
+                                logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 自动免拼发货失败: {result.get("error", "未知错误")}')
+                            await self._handle_auto_delivery(websocket, message, send_user_name, send_user_id,
+                                               item_id, chat_id, msg_time)
+                            return
+                        else:
+                            logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID，无法执行免拼发货')
                         return
                     else:
                         logger.info(f'[{msg_time}] 【{self.cookie_id}】收到卡片消息，标题: {card_title or "未知"}')
