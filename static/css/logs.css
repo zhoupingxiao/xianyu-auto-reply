@@ -1,0 +1,75 @@
+/* 日志管理样式 */
+.log-container {
+  height: 70vh;
+  overflow-y: auto;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.log-entry {
+  margin-bottom: 0px;
+  padding: 1px 0;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  line-height: 1.2;
+}
+
+.log-entry.DEBUG {
+  color: #9cdcfe;
+}
+
+.log-entry.INFO {
+  color: #4ec9b0;
+}
+
+.log-entry.WARNING {
+  color: #dcdcaa;
+}
+
+.log-entry.ERROR {
+  color: #f48771;
+}
+
+.log-entry.CRITICAL {
+  color: #ff6b6b;
+  font-weight: bold;
+}
+
+.log-timestamp {
+  color: #808080;
+}
+
+.log-level {
+  font-weight: bold;
+  margin: 0 5px;
+}
+
+.log-source {
+  color: #569cd6;
+}
+
+.log-message {
+  color: inherit;
+}
+
+.log-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.log-container::-webkit-scrollbar-track {
+  background: #2d2d30;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+  background: #464647;
+  border-radius: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+  background: #5a5a5c;
+}
