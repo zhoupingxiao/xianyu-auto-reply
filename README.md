@@ -117,7 +117,8 @@ xianyu-auto-reply/
 ├── 🐳 Docker部署
 │   ├── Dockerfile                 # Docker镜像构建文件
 │   ├── docker-compose.yml        # Docker Compose一键部署配置
-│   └── docker-deploy.sh          # Docker部署管理脚本
+│   ├── docker-deploy.sh          # Docker部署管理脚本（Linux/macOS）
+│   └── docker-deploy.bat         # Docker部署管理脚本（Windows）
 ├── 📋 配置文件
 │   ├── global_config.yml         # 全局配置文件（WebSocket、API等）
 │   ├── requirements.txt          # Python依赖包列表
@@ -143,11 +144,26 @@ xianyu-auto-reply/
 git clone https://github.com/zhinianboke/xianyu-auto-reply.git
 cd xianyu-auto-reply
 
-# 2. 一键部署（自动构建镜像）
+# 2. 设置脚本执行权限（Linux/macOS）
+chmod +x docker-deploy.sh
+
+# 3. 一键部署（自动构建镜像）
 ./docker-deploy.sh
 
-# 3. 访问系统
+# 4. 访问系统
 # http://localhost:8080
+```
+
+**Windows用户**：
+```cmd
+# 使用Windows批处理脚本（推荐）
+docker-deploy.bat
+
+# 或者使用Git Bash/WSL
+bash docker-deploy.sh
+
+# 或者直接使用Docker Compose
+docker-compose up -d --build
 ```
 
 ### 方式二：Docker Compose 手动部署
@@ -474,6 +490,41 @@ python Start.py
 - 推送分支：`git push origin feature/your-feature`
 - 提交 Pull Request
 
+
+## ❓ 常见问题
+
+### 1. 端口被占用
+如果8080端口被占用，可以修改 `.env` 文件中的 `WEB_PORT` 配置。
+
+### 2. 数据库连接失败
+检查数据库文件权限，确保应用有读写权限。
+
+### 3. WebSocket连接失败
+检查防火墙设置，确保WebSocket端口可以访问。
+
+### 4. Shell脚本执行错误（Linux/macOS）
+如果遇到 `bad interpreter` 错误，说明脚本的行结束符格式不正确：
+
+```bash
+# 方法1：手动修复行结束符
+sed -i 's/\r$//' docker-deploy.sh
+chmod +x docker-deploy.sh
+./docker-deploy.sh
+
+# 方法2：直接使用bash运行
+bash docker-deploy.sh
+```
+
+### 5. Windows系统部署
+Windows用户推荐使用批处理脚本：
+
+```cmd
+# 使用Windows批处理脚本
+docker-deploy.bat
+
+# 或者使用PowerShell
+powershell -ExecutionPolicy Bypass -File docker-deploy.bat
+```
 
 ## 📞 技术支持
 
