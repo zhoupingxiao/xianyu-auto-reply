@@ -456,7 +456,11 @@
               </div>
               <button class="add-btn" onclick="addKeyword()">
                 <i class="bi bi-plus-lg"></i>
-                添加
+                添加文本关键词
+              </button>
+              <button class="add-btn btn-image" onclick="showAddImageKeywordModal()">
+                <i class="bi bi-image"></i>
+                添加图片关键词
               </button>
             </div>
             <div class="mt-3">
@@ -1340,6 +1344,7 @@
                 <option value="api">API接口</option>
                 <option value="text">固定文字</option>
                 <option value="data">批量数据</option>
+                <option value="image">图片</option>
               </select>
             </div>
 
@@ -1400,6 +1405,31 @@
                   <label class="form-label">数据内容 (一行一个)</label>
                   <textarea class="form-control" id="dataContent" rows="10" placeholder="请输入数据，每行一个：&#10;卡号1:密码1&#10;卡号2:密码2&#10;或者&#10;兑换码1&#10;兑换码2"></textarea>
                   <small class="form-text text-muted">支持格式：卡号:密码 或 单独的兑换码</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- 图片配置 -->
+            <div id="imageFields" class="card mb-3" style="display: none;">
+              <div class="card-header">
+                <h6 class="mb-0">图片配置</h6>
+              </div>
+              <div class="card-body">
+                <div class="mb-3">
+                  <label class="form-label">选择图片 <span class="text-danger">*</span></label>
+                  <input type="file" class="form-control" id="cardImageFile" accept="image/*">
+                  <small class="form-text text-muted">
+                    <i class="bi bi-info-circle me-1"></i>
+                    支持JPG、PNG、GIF格式，最大5MB，建议尺寸不超过4096x4096像素
+                  </small>
+                </div>
+
+                <div id="cardImagePreview" class="mb-3" style="display: none;">
+                  <label class="form-label">图片预览</label>
+                  <div class="preview-container">
+                    <img id="cardPreviewImg" src="" alt="预览图片"
+                         style="max-width: 100%; max-height: 300px; border-radius: 8px; border: 1px solid #ddd;">
+                  </div>
                 </div>
               </div>
             </div>
@@ -2081,7 +2111,7 @@
             <input type="file" class="form-control" id="importFileInput" accept=".xlsx,.xls">
             <div class="form-text">
               <i class="bi bi-info-circle me-1"></i>
-              请上传包含"关键词"、"商品ID"、"关键词内容"三列的Excel文件
+              请上传包含"关键词"、"商品ID"、"关键词内容"三列的Excel文件（仅导入文本类型关键词，图片关键词将保留）
             </div>
           </div>
           <div class="alert alert-warning">
@@ -2089,8 +2119,10 @@
             <ul class="mb-0">
               <li>Excel文件必须包含三列：关键词、商品ID、关键词内容</li>
               <li>商品ID可以为空，表示通用关键词</li>
+              <li>导入的关键词默认为文本类型</li>
               <li>如果关键词+商品ID组合已存在，将更新关键词内容</li>
-              <li>导入将覆盖当前账号的所有关键词数据</li>
+              <li><strong>导入只会替换文本类型关键词，图片关键词将被保留</strong></li>
+              <li>导入完成后，您的图片关键词仍然存在且正常工作</li>
             </ul>
           </div>
           <div id="importProgress" style="display: none;">
@@ -2104,6 +2136,70 @@
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
           <button type="button" class="btn btn-primary" onclick="importKeywords()">
             <i class="bi bi-upload me-1"></i>开始导入
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加图片关键词模态框 -->
+  <div class="modal fade" id="addImageKeywordModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="bi bi-image me-2"></i>添加图片关键词
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="addImageKeywordForm">
+            <div class="row">
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">关键词 <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="imageKeyword" placeholder="例如：图片、照片" required>
+                  <div class="form-text">用户发送此关键词时将回复图片</div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">关联商品（可选）</label>
+                  <select class="form-select" id="imageItemIdSelect">
+                    <option value="">选择商品或留空表示通用关键词</option>
+                  </select>
+                  <div class="form-text">选择特定商品时，仅在该商品对话中生效</div>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label class="form-label">上传图片 <span class="text-danger">*</span></label>
+                  <input type="file" class="form-control" id="imageFile" accept="image/*" required>
+                  <div class="form-text">支持 JPG、PNG、GIF 格式，建议大小不超过 5MB</div>
+                </div>
+                <div class="mb-3">
+                  <div class="image-preview" id="imagePreview" style="display: none;">
+                    <label class="form-label">图片预览</label>
+                    <div class="preview-container">
+                      <img id="previewImg" src="" alt="预览图片" style="max-width: 100%; max-height: 200px; border-radius: 8px; border: 1px solid #ddd;">
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="alert alert-info">
+              <i class="bi bi-info-circle me-2"></i>
+              <strong>说明：</strong>
+              <ul class="mb-0 mt-2">
+                <li>图片关键词优先级高于文本关键词</li>
+                <li>用户发送匹配的关键词时，系统将回复上传的图片</li>
+                <li>图片将被转换为适合聊天的格式</li>
+              </ul>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-primary" onclick="addImageKeyword()">
+            <i class="bi bi-plus-lg me-1"></i>添加图片关键词
           </button>
         </div>
       </div>

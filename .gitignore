@@ -79,6 +79,13 @@ keywords_*.xlsx
 *.png.cache
 *.jpg.cache
 
+# 上传的文件（保留目录结构，忽略文件内容）
+static/uploads/*
+!static/uploads/.gitkeep
+!static/uploads/images/
+static/uploads/images/*
+!static/uploads/images/.gitkeep
+
 # 配置文件（包含敏感信息）
 config.local.yml
 global_config.local.yml

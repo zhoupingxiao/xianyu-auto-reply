@@ -498,6 +498,17 @@
     color: #374151;
   }
 
+  .edit-btn-disabled {
+    background: #f9fafb !important;
+    color: #9ca3af !important;
+    cursor: not-allowed !important;
+  }
+
+  .edit-btn-disabled:hover {
+    background: #f9fafb !important;
+    color: #9ca3af !important;
+  }
+
   .delete-btn {
     background: #fef2f2;
     color: #ef4444;
@@ -1274,5 +1285,88 @@
   @media (min-width: 1400px) {
     .channel-type-card {
       min-height: 200px; /* 大屏幕稍微增加高度 */
+    }
+  }
+
+  /* 图片关键词相关样式 */
+  .btn-image {
+    background: linear-gradient(135deg, #28a745, #20c997) !important;
+    border: none !important;
+    margin-left: 10px;
+  }
+
+  .btn-image:hover {
+    background: linear-gradient(135deg, #218838, #1ea085) !important;
+    transform: translateY(-1px);
+  }
+
+  .keyword-input-group {
+    display: flex;
+    gap: 15px;
+    align-items: end;
+    flex-wrap: wrap;
+  }
+
+  .keyword-input-group .add-btn {
+    white-space: nowrap;
+    min-width: auto;
+  }
+
+  .image-preview {
+    margin-top: 10px;
+  }
+
+  .preview-container {
+    padding: 10px;
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    text-align: center;
+    background-color: #f8f9fa;
+  }
+
+  .keyword-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-left: 8px;
+  }
+
+  .keyword-type-text {
+    background-color: #e3f2fd;
+    color: #1976d2;
+  }
+
+  .keyword-type-image {
+    background-color: #f3e5f5;
+    color: #7b1fa2;
+  }
+
+  /* 关键词列表中的图片预览 */
+  .keyword-image-preview {
+    max-width: 60px;
+    max-height: 60px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    cursor: pointer;
+  }
+
+  .keyword-image-preview:hover {
+    border-color: #007bff;
+    transform: scale(1.05);
+    transition: all 0.2s ease;
+  }
+
+  /* 响应式调整 */
+  @media (max-width: 768px) {
+    .keyword-input-group {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .keyword-input-group .add-btn {
+      margin-left: 0;
+      margin-top: 10px;
     }
   }

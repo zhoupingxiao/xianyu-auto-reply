@@ -451,7 +451,7 @@ async function loadAccountKeywords() {
         const data = await response.json();
         console.log('从服务器获取的关键词数据:', data); // 调试信息
 
-        // 后端返回的是 [{keyword, reply, item_id}, ...] 格式，直接使用
+        // 后端返回的是 [{keyword, reply, item_id, type, image_url}, ...] 格式，直接使用
         const formattedData = data;
 
         console.log('格式化后的关键词数据:', formattedData); // 调试信息
@@ -704,20 +704,50 @@ function renderKeywordsList(keywords) {
 
     const keywordItem = document.createElement('div');
     keywordItem.className = 'keyword-item';
+
+    // 判断关键词类型
+    const keywordType = item.type || 'text'; // 默认为文本类型
+    const isImageType = keywordType === 'image';
+
+    // 类型标识
+    const typeBadge = isImageType ?
+        '<span class="keyword-type-badge keyword-type-image"><i class="bi bi-image"></i> 图片</span>' :
+        '<span class="keyword-type-badge keyword-type-text"><i class="bi bi-chat-text"></i> 文本</span>';
+
     // 商品ID显示
     const itemIdDisplay = item.item_id ?
         `<small class="text-muted d-block"><i class="bi bi-box"></i> 商品ID: ${item.item_id}</small>` :
         '<small class="text-muted d-block"><i class="bi bi-globe"></i> 通用关键词</small>';
+
+    // 内容显示
+    let contentDisplay = '';
+    if (isImageType) {
+        // 图片类型显示图片预览
+        const imageUrl = item.reply || item.image_url || '';
+        contentDisplay = imageUrl ?
+            `<div class="d-flex align-items-center gap-3">
+                <img src="${imageUrl}" alt="关键词图片" class="keyword-image-preview" onclick="showImageModal('${imageUrl}')">
+                <div class="flex-grow-1">
+                    <p class="reply-text mb-0">用户发送关键词时将回复此图片</p>
+                    <small class="text-muted">点击图片查看大图</small>
+                </div>
+            </div>` :
+            '<p class="reply-text text-muted">图片加载失败</p>';
+    } else {
+        // 文本类型显示文本内容
+        contentDisplay = `<p class="reply-text">${item.reply || ''}</p>`;
+    }
 
     keywordItem.innerHTML = `
         <div class="keyword-item-header">
         <div class="keyword-tag">
             <i class="bi bi-tag-fill"></i>
             ${item.keyword}
+            ${typeBadge}
             ${itemIdDisplay}
         </div>
         <div class="keyword-actions">
-            <button class="action-btn edit-btn" onclick="editKeyword(${index})" title="编辑">
+            <button class="action-btn edit-btn ${isImageType ? 'edit-btn-disabled' : ''}" onclick="${isImageType ? 'editImageKeyword' : 'editKeyword'}(${index})" title="${isImageType ? '图片关键词不支持编辑' : '编辑'}">
             <i class="bi bi-pencil"></i>
             </button>
             <button class="action-btn delete-btn" onclick="deleteKeyword('${currentCookieId}', ${index})" title="删除">
@@ -726,7 +756,7 @@ function renderKeywordsList(keywords) {
         </div>
         </div>
         <div class="keyword-content">
-        <p class="reply-text">${item.reply}</p>
+        ${contentDisplay}
         </div>
     `;
     container.appendChild(keywordItem);
@@ -841,27 +871,18 @@ async function deleteKeyword(cookieId, index) {
     try {
     toggleLoading(true);
 
-    // 获取当前关键词列表
-    const currentKeywords = keywordsData[cookieId] || [];
-    // 移除指定索引的关键词
-    currentKeywords.splice(index, 1);
-
-    // 更新服务器
-    const response = await fetch(`${apiBase}/keywords-with-item-id/${cookieId}`, {
-        method: 'POST',
+    // 使用新的删除API
+    const response = await fetch(`${apiBase}/keywords/${cookieId}/${index}`, {
+        method: 'DELETE',
         headers: {
-        'Content-Type': 'application/json',
         'Authorization': `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
-        keywords: currentKeywords
-        })
+        }
     });
 
     if (response.ok) {
         showToast('关键词删除成功', 'success');
-        keywordsData[cookieId] = currentKeywords;
-        renderKeywordsList(currentKeywords);
+        // 重新加载关键词列表
+        loadAccountKeywords();
         clearKeywordCache(); // 清除缓存
     } else {
         const errorText = await response.text();
@@ -1654,6 +1675,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始加载仪表盘
     loadDashboard();
+
+    // 初始化图片关键词事件监听器
+    initImageKeywordEventListeners();
+
+    // 初始化卡券图片文件选择器
+    initCardImageFileSelector();
 
     // 点击侧边栏外部关闭移动端菜单
     document.addEventListener('click', function(e) {
@@ -2948,6 +2975,9 @@ function renderCardsList(cards) {
         case 'data':
         typeBadge = '<span class="badge bg-warning">批量数据</span>';
         break;
+        case 'image':
+        typeBadge = '<span class="badge bg-primary">图片</span>';
+        break;
     }
 
     // 状态标签
@@ -2963,6 +2993,8 @@ function renderCardsList(cards) {
     } else if (card.type === 'api') {
         dataCount = '∞';
     } else if (card.type === 'text') {
+        dataCount = '1';
+    } else if (card.type === 'image') {
         dataCount = '1';
     }
 
@@ -3037,12 +3069,118 @@ function toggleCardTypeFields() {
     document.getElementById('apiFields').style.display = cardType === 'api' ? 'block' : 'none';
     document.getElementById('textFields').style.display = cardType === 'text' ? 'block' : 'none';
     document.getElementById('dataFields').style.display = cardType === 'data' ? 'block' : 'none';
+    document.getElementById('imageFields').style.display = cardType === 'image' ? 'block' : 'none';
 }
 
 // 切换多规格字段显示
 function toggleMultiSpecFields() {
     const isMultiSpec = document.getElementById('isMultiSpec').checked;
     document.getElementById('multiSpecFields').style.display = isMultiSpec ? 'block' : 'none';
+}
+
+// 初始化卡券图片文件选择器
+function initCardImageFileSelector() {
+    const fileInput = document.getElementById('cardImageFile');
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                // 验证文件类型
+                if (!file.type.startsWith('image/')) {
+                    showToast('❌ 请选择图片文件，当前文件类型：' + file.type, 'warning');
+                    e.target.value = '';
+                    hideCardImagePreview();
+                    return;
+                }
+
+                // 验证文件大小（5MB）
+                if (file.size > 5 * 1024 * 1024) {
+                    showToast('❌ 图片文件大小不能超过 5MB，当前文件大小：' + (file.size / 1024 / 1024).toFixed(1) + 'MB', 'warning');
+                    e.target.value = '';
+                    hideCardImagePreview();
+                    return;
+                }
+
+                // 验证图片尺寸
+                validateCardImageDimensions(file, e.target);
+            } else {
+                hideCardImagePreview();
+            }
+        });
+    }
+}
+
+// 验证卡券图片尺寸
+function validateCardImageDimensions(file, inputElement) {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = function() {
+        const width = this.naturalWidth;
+        const height = this.naturalHeight;
+
+        // 释放对象URL
+        URL.revokeObjectURL(url);
+
+        // 检查图片尺寸
+        const maxDimension = 4096;
+        const maxPixels = 8 * 1024 * 1024; // 8M像素
+        const totalPixels = width * height;
+
+        if (width > maxDimension || height > maxDimension) {
+            showToast(`❌ 图片尺寸过大：${width}x${height}，最大允许：${maxDimension}x${maxDimension}像素`, 'warning');
+            inputElement.value = '';
+            hideCardImagePreview();
+            return;
+        }
+
+        if (totalPixels > maxPixels) {
+            showToast(`❌ 图片像素总数过大：${(totalPixels / 1024 / 1024).toFixed(1)}M像素，最大允许：8M像素`, 'warning');
+            inputElement.value = '';
+            hideCardImagePreview();
+            return;
+        }
+
+        // 尺寸检查通过，显示预览和提示信息
+        showCardImagePreview(file);
+
+        // 如果图片较大，提示会被压缩
+        if (width > 2048 || height > 2048) {
+            showToast(`ℹ️ 图片尺寸较大（${width}x${height}），上传时将自动压缩以优化性能`, 'info');
+        } else {
+            showToast(`✅ 图片尺寸合适（${width}x${height}），可以上传`, 'success');
+        }
+    };
+
+    img.onerror = function() {
+        URL.revokeObjectURL(url);
+        showToast('❌ 无法读取图片文件，请选择有效的图片', 'warning');
+        inputElement.value = '';
+        hideCardImagePreview();
+    };
+
+    img.src = url;
+}
+
+// 显示卡券图片预览
+function showCardImagePreview(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const previewContainer = document.getElementById('cardImagePreview');
+        const previewImg = document.getElementById('cardPreviewImg');
+
+        previewImg.src = e.target.result;
+        previewContainer.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+}
+
+// 隐藏卡券图片预览
+function hideCardImagePreview() {
+    const previewContainer = document.getElementById('cardImagePreview');
+    if (previewContainer) {
+        previewContainer.style.display = 'none';
+    }
 }
 
 // 切换编辑多规格字段显示
@@ -3202,6 +3340,35 @@ async function saveCard() {
         case 'data':
         cardData.data_content = document.getElementById('dataContent').value;
         break;
+        case 'image':
+        // 处理图片上传
+        const imageFile = document.getElementById('cardImageFile').files[0];
+        if (!imageFile) {
+            showToast('请选择图片文件', 'warning');
+            return;
+        }
+
+        // 上传图片
+        const formData = new FormData();
+        formData.append('image', imageFile);
+
+        const uploadResponse = await fetch(`${apiBase}/upload-image`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: formData
+        });
+
+        if (!uploadResponse.ok) {
+            const errorData = await uploadResponse.json();
+            showToast(`图片上传失败: ${errorData.detail || '未知错误'}`, 'danger');
+            return;
+        }
+
+        const uploadResult = await uploadResponse.json();
+        cardData.image_url = uploadResult.image_url;
+        break;
     }
 
     const response = await fetch(`${apiBase}/cards`, {
@@ -3307,6 +3474,9 @@ function renderDeliveryRulesList(rules) {
         case 'data':
             cardTypeBadge = '<span class="badge bg-warning">批量数据</span>';
             break;
+        case 'image':
+            cardTypeBadge = '<span class="badge bg-primary">图片</span>';
+            break;
         }
     }
 
@@ -3396,7 +3566,23 @@ async function loadCardsForSelect() {
             let displayText = card.name;
 
             // 添加类型信息
-            const typeText = card.type === 'api' ? 'API' : card.type === 'text' ? '固定文字' : '批量数据';
+            let typeText;
+            switch(card.type) {
+                case 'api':
+                    typeText = 'API';
+                    break;
+                case 'text':
+                    typeText = '固定文字';
+                    break;
+                case 'data':
+                    typeText = '批量数据';
+                    break;
+                case 'image':
+                    typeText = '图片';
+                    break;
+                default:
+                    typeText = '未知类型';
+            }
             displayText += ` (${typeText})`;
 
             // 添加规格信息
@@ -3734,7 +3920,23 @@ async function loadCardsForEditSelect() {
             let displayText = card.name;
 
             // 添加类型信息
-            const typeText = card.type === 'api' ? 'API' : card.type === 'text' ? '固定文字' : '批量数据';
+            let typeText;
+            switch(card.type) {
+                case 'api':
+                    typeText = 'API';
+                    break;
+                case 'text':
+                    typeText = '固定文字';
+                    break;
+                case 'data':
+                    typeText = '批量数据';
+                    break;
+                case 'image':
+                    typeText = '图片';
+                    break;
+                default:
+                    typeText = '未知类型';
+            }
             displayText += ` (${typeText})`;
 
             // 添加规格信息
@@ -5512,4 +5714,374 @@ function clearQRCodeCheck() {
 function refreshQRCode() {
     clearQRCodeCheck();
     generateQRCode();
+}
+
+// ==================== 图片关键词管理功能 ====================
+
+// 显示添加图片关键词模态框
+function showAddImageKeywordModal() {
+    if (!currentCookieId) {
+        showToast('请先选择账号', 'warning');
+        return;
+    }
+
+    // 加载商品列表到图片关键词模态框
+    loadItemsListForImageKeyword();
+
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('addImageKeywordModal'));
+    modal.show();
+
+    // 清空表单
+    document.getElementById('imageKeyword').value = '';
+    document.getElementById('imageItemIdSelect').value = '';
+    document.getElementById('imageFile').value = '';
+    hideImagePreview();
+}
+
+// 为图片关键词模态框加载商品列表
+async function loadItemsListForImageKeyword() {
+    try {
+        const response = await fetch(`${apiBase}/items/${currentCookieId}`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const items = data.items || [];
+
+            // 更新商品选择下拉框
+            const selectElement = document.getElementById('imageItemIdSelect');
+            if (selectElement) {
+                // 清空现有选项（保留第一个默认选项）
+                selectElement.innerHTML = '<option value="">选择商品或留空表示通用关键词</option>';
+
+                // 添加商品选项
+                items.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.item_id;
+                    option.textContent = `${item.item_id} - ${item.item_title}`;
+                    selectElement.appendChild(option);
+                });
+            }
+
+            console.log(`为图片关键词加载了 ${items.length} 个商品到选择列表`);
+        } else {
+            console.warn('加载商品列表失败:', response.status);
+        }
+    } catch (error) {
+        console.error('加载商品列表时发生错误:', error);
+    }
+}
+
+// 处理图片文件选择事件监听器
+function initImageKeywordEventListeners() {
+    const imageFileInput = document.getElementById('imageFile');
+    if (imageFileInput && !imageFileInput.hasEventListener) {
+        imageFileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                // 验证文件类型
+                if (!file.type.startsWith('image/')) {
+                    showToast('请选择图片文件', 'warning');
+                    e.target.value = '';
+                    hideImagePreview();
+                    return;
+                }
+
+                // 验证文件大小（5MB）
+                if (file.size > 5 * 1024 * 1024) {
+                    showToast('❌ 图片文件大小不能超过 5MB，当前文件大小：' + (file.size / 1024 / 1024).toFixed(1) + 'MB', 'warning');
+                    e.target.value = '';
+                    hideImagePreview();
+                    return;
+                }
+
+                // 验证图片尺寸
+                validateImageDimensions(file, e.target);
+            } else {
+                hideImagePreview();
+            }
+        });
+        imageFileInput.hasEventListener = true;
+    }
+}
+
+// 验证图片尺寸
+function validateImageDimensions(file, inputElement) {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = function() {
+        const width = this.naturalWidth;
+        const height = this.naturalHeight;
+
+        // 释放对象URL
+        URL.revokeObjectURL(url);
+
+        // 检查图片尺寸
+        const maxDimension = 4096;
+        const maxPixels = 8 * 1024 * 1024; // 8M像素
+        const totalPixels = width * height;
+
+        if (width > maxDimension || height > maxDimension) {
+            showToast(`❌ 图片尺寸过大：${width}x${height}，最大允许：${maxDimension}x${maxDimension}像素`, 'warning');
+            inputElement.value = '';
+            hideImagePreview();
+            return;
+        }
+
+        if (totalPixels > maxPixels) {
+            showToast(`❌ 图片像素总数过大：${(totalPixels / 1024 / 1024).toFixed(1)}M像素，最大允许：8M像素`, 'warning');
+            inputElement.value = '';
+            hideImagePreview();
+            return;
+        }
+
+        // 尺寸检查通过，显示预览和提示信息
+        showImagePreview(file);
+
+        // 如果图片较大，提示会被压缩
+        if (width > 2048 || height > 2048) {
+            showToast(`ℹ️ 图片尺寸较大（${width}x${height}），上传时将自动压缩以优化性能`, 'info');
+        } else {
+            showToast(`✅ 图片尺寸合适（${width}x${height}），可以上传`, 'success');
+        }
+    };
+
+    img.onerror = function() {
+        URL.revokeObjectURL(url);
+        showToast('❌ 无法读取图片文件，请选择有效的图片', 'warning');
+        inputElement.value = '';
+        hideImagePreview();
+    };
+
+    img.src = url;
+}
+
+// 显示图片预览
+function showImagePreview(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const previewContainer = document.getElementById('imagePreview');
+        const previewImg = document.getElementById('previewImg');
+
+        previewImg.src = e.target.result;
+        previewContainer.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+}
+
+// 隐藏图片预览
+function hideImagePreview() {
+    const previewContainer = document.getElementById('imagePreview');
+    if (previewContainer) {
+        previewContainer.style.display = 'none';
+    }
+}
+
+// 添加图片关键词
+async function addImageKeyword() {
+    const keyword = document.getElementById('imageKeyword').value.trim();
+    const itemId = document.getElementById('imageItemIdSelect').value.trim();
+    const fileInput = document.getElementById('imageFile');
+    const file = fileInput.files[0];
+
+    if (!keyword) {
+        showToast('请填写关键词', 'warning');
+        return;
+    }
+
+    if (!file) {
+        showToast('请选择图片文件', 'warning');
+        return;
+    }
+
+    if (!currentCookieId) {
+        showToast('请先选择账号', 'warning');
+        return;
+    }
+
+    try {
+        toggleLoading(true);
+
+        // 创建FormData对象
+        const formData = new FormData();
+        formData.append('keyword', keyword);
+        formData.append('item_id', itemId || '');
+        formData.append('image', file);
+
+        const response = await fetch(`${apiBase}/keywords/${currentCookieId}/image`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: formData
+        });
+
+        if (response.ok) {
+            showToast(`✨ 图片关键词 "${keyword}" 添加成功！`, 'success');
+
+            // 关闭模态框
+            const modal = bootstrap.Modal.getInstance(document.getElementById('addImageKeywordModal'));
+            modal.hide();
+
+            // 重新加载关键词列表
+            loadAccountKeywords();
+            clearKeywordCache();
+        } else {
+            try {
+                const errorData = await response.json();
+                let errorMessage = errorData.detail || '图片关键词添加失败';
+
+                // 根据不同的错误类型提供更友好的提示
+                if (errorMessage.includes('图片尺寸过大')) {
+                    errorMessage = '❌ 图片尺寸过大，请选择尺寸较小的图片（建议不超过4096x4096像素）';
+                } else if (errorMessage.includes('图片像素总数过大')) {
+                    errorMessage = '❌ 图片像素总数过大，请选择分辨率较低的图片';
+                } else if (errorMessage.includes('图片数据验证失败')) {
+                    errorMessage = '❌ 图片格式不支持或文件损坏，请选择JPG、PNG、GIF格式的图片';
+                } else if (errorMessage.includes('图片保存失败')) {
+                    errorMessage = '❌ 图片保存失败，请检查图片格式和大小后重试';
+                } else if (errorMessage.includes('文件大小超过限制')) {
+                    errorMessage = '❌ 图片文件过大，请选择小于5MB的图片';
+                } else if (errorMessage.includes('不支持的图片格式')) {
+                    errorMessage = '❌ 不支持的图片格式，请选择JPG、PNG、GIF格式的图片';
+                } else if (response.status === 413) {
+                    errorMessage = '❌ 图片文件过大，请选择小于5MB的图片';
+                } else if (response.status === 400) {
+                    errorMessage = `❌ 请求参数错误：${errorMessage}`;
+                } else if (response.status === 500) {
+                    errorMessage = '❌ 服务器内部错误，请稍后重试';
+                }
+
+                console.error('图片关键词添加失败:', errorMessage);
+                showToast(errorMessage, 'danger');
+            } catch (e) {
+                // 如果不是JSON格式，使用文本
+                const errorText = await response.text();
+                console.error('图片关键词添加失败:', errorText);
+
+                let friendlyMessage = '图片关键词添加失败';
+                if (response.status === 413) {
+                    friendlyMessage = '❌ 图片文件过大，请选择小于5MB的图片';
+                } else if (response.status === 400) {
+                    friendlyMessage = '❌ 图片格式不正确或参数错误，请检查后重试';
+                } else if (response.status === 500) {
+                    friendlyMessage = '❌ 服务器内部错误，请稍后重试';
+                }
+
+                showToast(friendlyMessage, 'danger');
+            }
+        }
+    } catch (error) {
+        console.error('添加图片关键词失败:', error);
+        showToast('添加图片关键词失败', 'danger');
+    } finally {
+        toggleLoading(false);
+    }
+}
+
+// 显示图片模态框
+function showImageModal(imageUrl) {
+    // 创建模态框HTML
+    const modalHtml = `
+        <div class="modal fade" id="imageViewModal" tabindex="-1">
+            <div class="modal-dialog modal-lg modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">图片预览</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body text-center">
+                        <img src="${imageUrl}" alt="关键词图片" style="max-width: 100%; max-height: 70vh; border-radius: 8px;">
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // 移除已存在的模态框
+    const existingModal = document.getElementById('imageViewModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    // 添加新模态框
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('imageViewModal'));
+    modal.show();
+
+    // 模态框关闭后移除DOM元素
+    document.getElementById('imageViewModal').addEventListener('hidden.bs.modal', function() {
+        this.remove();
+    });
+}
+
+// 编辑图片关键词（不允许修改）
+function editImageKeyword(index) {
+    showToast('图片关键词不允许修改，请删除后重新添加', 'warning');
+}
+
+// 修改导出关键词函数，使用后端导出API
+async function exportKeywords() {
+    if (!currentCookieId) {
+        showToast('请先选择账号', 'warning');
+        return;
+    }
+
+    try {
+        toggleLoading(true);
+
+        // 使用后端导出API
+        const response = await fetch(`${apiBase}/keywords-export/${currentCookieId}`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (response.ok) {
+            // 获取文件blob
+            const blob = await response.blob();
+
+            // 从响应头获取文件名
+            const contentDisposition = response.headers.get('Content-Disposition');
+            let fileName = `关键词数据_${currentCookieId}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+            if (contentDisposition) {
+                const fileNameMatch = contentDisposition.match(/filename\*=UTF-8''(.+)/);
+                if (fileNameMatch) {
+                    fileName = decodeURIComponent(fileNameMatch[1]);
+                }
+            }
+
+            // 创建下载链接
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+
+            // 清理
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            showToast('✅ 关键词导出成功', 'success');
+        } else {
+            const errorText = await response.text();
+            console.error('导出关键词失败:', errorText);
+            showToast('导出关键词失败', 'danger');
+        }
+    } catch (error) {
+        console.error('导出关键词失败:', error);
+        showToast('导出关键词失败', 'danger');
+    } finally {
+        toggleLoading(false);
+    }
 }

@@ -125,6 +125,8 @@ class DBManager:
                 keyword TEXT,
                 reply TEXT,
                 item_id TEXT,
+                type TEXT DEFAULT 'text',
+                image_url TEXT,
                 FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE
             )
             ''')
@@ -190,10 +192,11 @@ class DBManager:
             CREATE TABLE IF NOT EXISTS cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                type TEXT NOT NULL CHECK (type IN ('api', 'text', 'data')),
+                type TEXT NOT NULL CHECK (type IN ('api', 'text', 'data', 'image')),
                 api_config TEXT,
                 text_content TEXT,
                 data_content TEXT,
+                image_url TEXT,
                 description TEXT,
                 enabled BOOLEAN DEFAULT TRUE,
                 delay_seconds INTEGER DEFAULT 0,
@@ -344,12 +347,104 @@ class DBManager:
             # 检查并升级数据库
             self.check_and_upgrade_db(cursor)
 
+            # 执行数据库迁移
+            self._migrate_database(cursor)
+
             self.conn.commit()
             logger.info("数据库初始化完成")
         except Exception as e:
             logger.error(f"数据库初始化失败: {e}")
             self.conn.rollback()
             raise
+
+    def _migrate_database(self, cursor):
+        """执行数据库迁移"""
+        try:
+            # 检查cards表是否存在image_url列
+            cursor.execute("PRAGMA table_info(cards)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            if 'image_url' not in columns:
+                logger.info("添加cards表的image_url列...")
+                cursor.execute("ALTER TABLE cards ADD COLUMN image_url TEXT")
+                logger.info("数据库迁移完成：添加image_url列")
+
+            # 检查并更新CHECK约束（重建表以支持image类型）
+            self._update_cards_table_constraints(cursor)
+
+        except Exception as e:
+            logger.error(f"数据库迁移失败: {e}")
+            # 迁移失败不应该阻止程序启动
+            pass
+
+    def _update_cards_table_constraints(self, cursor):
+        """更新cards表的CHECK约束以支持image类型"""
+        try:
+            # 尝试插入一个测试的image类型记录来检查约束
+            cursor.execute('''
+                INSERT INTO cards (name, type, user_id)
+                VALUES ('__test_image_constraint__', 'image', 1)
+            ''')
+            # 如果插入成功，立即删除测试记录
+            cursor.execute("DELETE FROM cards WHERE name = '__test_image_constraint__'")
+            logger.info("cards表约束检查通过，支持image类型")
+        except Exception as e:
+            if "CHECK constraint failed" in str(e) or "constraint" in str(e).lower():
+                logger.info("检测到旧的CHECK约束，开始更新cards表...")
+
+                # 重建表以更新约束
+                try:
+                    # 1. 创建新表
+                    cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS cards_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        type TEXT NOT NULL CHECK (type IN ('api', 'text', 'data', 'image')),
+                        api_config TEXT,
+                        text_content TEXT,
+                        data_content TEXT,
+                        image_url TEXT,
+                        description TEXT,
+                        enabled BOOLEAN DEFAULT TRUE,
+                        delay_seconds INTEGER DEFAULT 0,
+                        is_multi_spec BOOLEAN DEFAULT FALSE,
+                        spec_name TEXT,
+                        spec_value TEXT,
+                        user_id INTEGER NOT NULL DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (id)
+                    )
+                    ''')
+
+                    # 2. 复制数据
+                    cursor.execute('''
+                    INSERT INTO cards_new (id, name, type, api_config, text_content, data_content, image_url,
+                                          description, enabled, delay_seconds, is_multi_spec, spec_name, spec_value,
+                                          user_id, created_at, updated_at)
+                    SELECT id, name, type, api_config, text_content, data_content, image_url,
+                           description, enabled, delay_seconds, is_multi_spec, spec_name, spec_value,
+                           user_id, created_at, updated_at
+                    FROM cards
+                    ''')
+
+                    # 3. 删除旧表
+                    cursor.execute("DROP TABLE cards")
+
+                    # 4. 重命名新表
+                    cursor.execute("ALTER TABLE cards_new RENAME TO cards")
+
+                    logger.info("cards表约束更新完成，现在支持image类型")
+
+                except Exception as rebuild_error:
+                    logger.error(f"重建cards表失败: {rebuild_error}")
+                    # 如果重建失败，尝试回滚
+                    try:
+                        cursor.execute("DROP TABLE IF EXISTS cards_new")
+                    except:
+                        pass
+            else:
+                logger.error(f"检查cards表约束时出现未知错误: {e}")
             
     def check_and_upgrade_db(self, cursor):
         """检查数据库版本并执行必要的升级"""
@@ -377,6 +472,13 @@ class DBManager:
                 self.upgrade_notification_channels_types(cursor)
                 self.set_system_setting("db_version", "1.2", "数据库版本号")
                 logger.info("数据库升级到版本1.2完成")
+
+            # 升级到版本1.3 - 添加关键词类型和图片URL字段
+            if current_version < "1.3":
+                logger.info("开始升级数据库到版本1.3...")
+                self.upgrade_keywords_table_for_image_support(cursor)
+                self.set_system_setting("db_version", "1.3", "数据库版本号")
+                logger.info("数据库升级到版本1.3完成")
 
             # 迁移遗留数据（在所有版本升级完成后执行）
             self.migrate_legacy_data(cursor)
@@ -1059,6 +1161,40 @@ class DBManager:
                 logger.error(f"关键字保存失败: {e}")
                 self.conn.rollback()
                 return False
+
+    def save_text_keywords_only(self, cookie_id: str, keywords: List[Tuple[str, str, str]]) -> bool:
+        """保存文本关键字列表，只删除文本类型的关键词，保留图片关键词"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 只删除该cookie_id的文本类型关键字，保留图片关键词
+                self._execute_sql(cursor,
+                    "DELETE FROM keywords WHERE cookie_id = ? AND (type IS NULL OR type = 'text')",
+                    (cookie_id,))
+
+                # 插入新的文本关键字
+                for keyword, reply, item_id in keywords:
+                    # 标准化item_id：空字符串转为NULL
+                    normalized_item_id = item_id if item_id and item_id.strip() else None
+
+                    try:
+                        self._execute_sql(cursor,
+                            "INSERT INTO keywords (cookie_id, keyword, reply, item_id, type) VALUES (?, ?, ?, ?, 'text')",
+                            (cookie_id, keyword, reply, normalized_item_id))
+                    except sqlite3.IntegrityError as ie:
+                        # 如果遇到唯一约束冲突，记录详细错误信息
+                        item_desc = f"商品ID: {normalized_item_id}" if normalized_item_id else "通用关键词"
+                        logger.error(f"关键词唯一约束冲突: Cookie={cookie_id}, 关键词='{keyword}', {item_desc}")
+                        raise ie
+
+                self.conn.commit()
+                logger.info(f"文本关键字保存成功: {cookie_id}, {len(keywords)}条，图片关键词已保留")
+                return True
+            except Exception as e:
+                logger.error(f"文本关键字保存失败: {e}")
+                self.conn.rollback()
+                return False
     
     def get_keywords(self, cookie_id: str) -> List[Tuple[str, str]]:
         """获取指定Cookie的关键字列表（向后兼容方法）"""
@@ -1104,8 +1240,107 @@ class DBManager:
                 logger.error(f"检查关键词重复失败: {e}")
                 return False
 
+    def save_image_keyword(self, cookie_id: str, keyword: str, image_url: str, item_id: str = None) -> bool:
+        """保存图片关键词（调用前应先检查重复）"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
 
-    
+                # 标准化item_id：空字符串转为NULL
+                normalized_item_id = item_id if item_id and item_id.strip() else None
+
+                # 直接插入图片关键词（重复检查应在调用前完成）
+                self._execute_sql(cursor,
+                    "INSERT INTO keywords (cookie_id, keyword, reply, item_id, type, image_url) VALUES (?, ?, ?, ?, ?, ?)",
+                    (cookie_id, keyword, '', normalized_item_id, 'image', image_url))
+
+                self.conn.commit()
+                logger.info(f"图片关键词保存成功: {cookie_id}, 关键词: {keyword}, 图片: {image_url}")
+                return True
+            except Exception as e:
+                logger.error(f"图片关键词保存失败: {e}")
+                self.conn.rollback()
+                return False
+
+    def get_keywords_with_type(self, cookie_id: str) -> List[Dict[str, any]]:
+        """获取指定Cookie的关键字列表（包含类型信息）"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor,
+                    "SELECT keyword, reply, item_id, type, image_url FROM keywords WHERE cookie_id = ?",
+                    (cookie_id,))
+
+                results = []
+                for row in cursor.fetchall():
+                    keyword_data = {
+                        'keyword': row[0],
+                        'reply': row[1],
+                        'item_id': row[2],
+                        'type': row[3] or 'text',  # 默认为text类型
+                        'image_url': row[4]
+                    }
+                    results.append(keyword_data)
+
+                return results
+            except Exception as e:
+                logger.error(f"获取关键字失败: {e}")
+                return []
+
+    def update_keyword_image_url(self, cookie_id: str, keyword: str, new_image_url: str) -> bool:
+        """更新关键词的图片URL"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 更新图片URL
+                self._execute_sql(cursor,
+                    "UPDATE keywords SET image_url = ? WHERE cookie_id = ? AND keyword = ? AND type = 'image'",
+                    (new_image_url, cookie_id, keyword))
+
+                self.conn.commit()
+
+                # 检查是否有行被更新
+                if cursor.rowcount > 0:
+                    logger.info(f"关键词图片URL更新成功: {cookie_id}, 关键词: {keyword}, 新URL: {new_image_url}")
+                    return True
+                else:
+                    logger.warning(f"未找到匹配的图片关键词: {cookie_id}, 关键词: {keyword}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"更新关键词图片URL失败: {e}")
+                self.conn.rollback()
+                return False
+
+    def delete_keyword_by_index(self, cookie_id: str, index: int) -> bool:
+        """根据索引删除关键词"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 先获取所有关键词
+                self._execute_sql(cursor,
+                    "SELECT rowid FROM keywords WHERE cookie_id = ? ORDER BY rowid",
+                    (cookie_id,))
+                rows = cursor.fetchall()
+
+                if 0 <= index < len(rows):
+                    rowid = rows[index][0]
+                    self._execute_sql(cursor, "DELETE FROM keywords WHERE rowid = ?", (rowid,))
+                    self.conn.commit()
+                    logger.info(f"删除关键词成功: {cookie_id}, 索引: {index}")
+                    return True
+                else:
+                    logger.warning(f"关键词索引超出范围: {index}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"删除关键词失败: {e}")
+                self.conn.rollback()
+                return False
+
+
     def get_all_keywords(self, user_id: int = None) -> Dict[str, List[Tuple[str, str]]]:
         """获取所有Cookie的关键字（支持用户隔离）"""
         with self.lock:
@@ -2135,7 +2370,7 @@ class DBManager:
     # ==================== 卡券管理方法 ====================
 
     def create_card(self, name: str, card_type: str, api_config=None,
-                   text_content: str = None, data_content: str = None,
+                   text_content: str = None, data_content: str = None, image_url: str = None,
                    description: str = None, enabled: bool = True, delay_seconds: int = 0,
                    is_multi_spec: bool = False, spec_name: str = None, spec_value: str = None,
                    user_id: int = None):
@@ -2177,11 +2412,11 @@ class DBManager:
                         api_config_str = str(api_config)
 
                 cursor.execute('''
-                INSERT INTO cards (name, type, api_config, text_content, data_content,
+                INSERT INTO cards (name, type, api_config, text_content, data_content, image_url,
                                  description, enabled, delay_seconds, is_multi_spec,
                                  spec_name, spec_value, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (name, card_type, api_config_str, text_content, data_content,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (name, card_type, api_config_str, text_content, data_content, image_url,
                       description, enabled, delay_seconds, is_multi_spec,
                       spec_name, spec_value, user_id))
                 self.conn.commit()
@@ -2203,7 +2438,7 @@ class DBManager:
                 cursor = self.conn.cursor()
                 if user_id is not None:
                     cursor.execute('''
-                    SELECT id, name, type, api_config, text_content, data_content,
+                    SELECT id, name, type, api_config, text_content, data_content, image_url,
                            description, enabled, delay_seconds, is_multi_spec,
                            spec_name, spec_value, created_at, updated_at
                     FROM cards
@@ -2212,7 +2447,7 @@ class DBManager:
                     ''', (user_id,))
                 else:
                     cursor.execute('''
-                    SELECT id, name, type, api_config, text_content, data_content,
+                    SELECT id, name, type, api_config, text_content, data_content, image_url,
                            description, enabled, delay_seconds, is_multi_spec,
                            spec_name, spec_value, created_at, updated_at
                     FROM cards
@@ -2238,14 +2473,15 @@ class DBManager:
                         'api_config': api_config,
                         'text_content': row[4],
                         'data_content': row[5],
-                        'description': row[6],
-                        'enabled': bool(row[7]),
-                        'delay_seconds': row[8] or 0,
-                        'is_multi_spec': bool(row[9]) if row[9] is not None else False,
-                        'spec_name': row[10],
-                        'spec_value': row[11],
-                        'created_at': row[12],
-                        'updated_at': row[13]
+                        'image_url': row[6],
+                        'description': row[7],
+                        'enabled': bool(row[8]),
+                        'delay_seconds': row[9] or 0,
+                        'is_multi_spec': bool(row[10]) if row[10] is not None else False,
+                        'spec_name': row[11],
+                        'spec_value': row[12],
+                        'created_at': row[13],
+                        'updated_at': row[14]
                     })
 
                 return cards
@@ -2260,14 +2496,14 @@ class DBManager:
                 cursor = self.conn.cursor()
                 if user_id is not None:
                     cursor.execute('''
-                    SELECT id, name, type, api_config, text_content, data_content,
+                    SELECT id, name, type, api_config, text_content, data_content, image_url,
                            description, enabled, delay_seconds, is_multi_spec,
                            spec_name, spec_value, created_at, updated_at
                     FROM cards WHERE id = ? AND user_id = ?
                     ''', (card_id, user_id))
                 else:
                     cursor.execute('''
-                    SELECT id, name, type, api_config, text_content, data_content,
+                    SELECT id, name, type, api_config, text_content, data_content, image_url,
                            description, enabled, delay_seconds, is_multi_spec,
                            spec_name, spec_value, created_at, updated_at
                     FROM cards WHERE id = ?
@@ -2292,14 +2528,15 @@ class DBManager:
                         'api_config': api_config,
                         'text_content': row[4],
                         'data_content': row[5],
-                        'description': row[6],
-                        'enabled': bool(row[7]),
-                        'delay_seconds': row[8] or 0,
-                        'is_multi_spec': bool(row[9]) if row[9] is not None else False,
-                        'spec_name': row[10],
-                        'spec_value': row[11],
-                        'created_at': row[12],
-                        'updated_at': row[13]
+                        'image_url': row[6],
+                        'description': row[7],
+                        'enabled': bool(row[8]),
+                        'delay_seconds': row[9] or 0,
+                        'is_multi_spec': bool(row[10]) if row[10] is not None else False,
+                        'spec_name': row[11],
+                        'spec_value': row[12],
+                        'created_at': row[13],
+                        'updated_at': row[14]
                     }
                 return None
             except Exception as e:
@@ -2464,7 +2701,7 @@ class DBManager:
                 SELECT dr.id, dr.keyword, dr.card_id, dr.delivery_count, dr.enabled,
                        dr.description, dr.delivery_times,
                        c.name as card_name, c.type as card_type, c.api_config,
-                       c.text_content, c.data_content, c.enabled as card_enabled, c.description as card_description,
+                       c.text_content, c.data_content, c.image_url, c.enabled as card_enabled, c.description as card_description,
                        c.delay_seconds as card_delay_seconds
                 FROM delivery_rules dr
                 LEFT JOIN cards c ON dr.card_id = c.id
@@ -2503,9 +2740,10 @@ class DBManager:
                         'api_config': api_config,  # 修复字段名
                         'text_content': row[10],
                         'data_content': row[11],
-                        'card_enabled': bool(row[12]),
-                        'card_description': row[13],  # 卡券备注信息
-                        'card_delay_seconds': row[14] or 0  # 延时秒数
+                        'image_url': row[12],
+                        'card_enabled': bool(row[13]),
+                        'card_description': row[14],  # 卡券备注信息
+                        'card_delay_seconds': row[15] or 0  # 延时秒数
                     })
 
                 return rules
@@ -3682,6 +3920,33 @@ class DBManager:
                 logger.error(f"清空表数据失败: {table_name} - {e}")
                 self.conn.rollback()
                 return False
+
+    def upgrade_keywords_table_for_image_support(self, cursor):
+        """升级keywords表以支持图片关键词"""
+        try:
+            logger.info("开始升级keywords表以支持图片关键词...")
+
+            # 检查是否已经有type字段
+            cursor.execute("PRAGMA table_info(keywords)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            if 'type' not in columns:
+                logger.info("添加type字段到keywords表...")
+                cursor.execute("ALTER TABLE keywords ADD COLUMN type TEXT DEFAULT 'text'")
+
+            if 'image_url' not in columns:
+                logger.info("添加image_url字段到keywords表...")
+                cursor.execute("ALTER TABLE keywords ADD COLUMN image_url TEXT")
+
+            # 为现有记录设置默认类型
+            cursor.execute("UPDATE keywords SET type = 'text' WHERE type IS NULL")
+
+            logger.info("keywords表升级完成")
+            return True
+
+        except Exception as e:
+            logger.error(f"升级keywords表失败: {e}")
+            raise
 
 
 # 全局单例

@@ -259,10 +259,24 @@ class XianyuLive:
                     # 标记已发货（防重复）- 基于订单ID
                     self.mark_delivery_sent(order_id)
 
-                    # 发送发货内容给买家
-                    await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
-                    logger.info(f'[{msg_time}] 【自动发货】已向 {user_url} 发送发货内容')
-                    await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "发货成功")
+                    # 检查是否是图片发送标记
+                    if delivery_content.startswith("__IMAGE_SEND__"):
+                        # 提取图片URL
+                        image_url = delivery_content.replace("__IMAGE_SEND__", "")
+                        # 发送图片消息
+                        try:
+                            await self.send_image_msg(websocket, chat_id, send_user_id, image_url)
+                            logger.info(f'[{msg_time}] 【自动发货图片】已向 {user_url} 发送图片: {image_url}')
+                            await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "发货成功")
+                        except Exception as e:
+                            logger.error(f"自动发货图片失败: {self._safe_str(e)}")
+                            await self.send_msg(websocket, chat_id, send_user_id, "抱歉，图片发送失败，请联系客服。")
+                            await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "图片发送失败")
+                    else:
+                        # 普通文本发货内容
+                        await self.send_msg(websocket, chat_id, send_user_id, delivery_content)
+                        logger.info(f'[{msg_time}] 【自动发货】已向 {user_url} 发送发货内容')
+                        await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "发货成功")
                 else:
                     logger.warning(f'[{msg_time}] 【自动发货】未找到匹配的发货规则或获取发货内容失败')
                     # 发送自动发货失败通知
@@ -904,12 +918,12 @@ class XianyuLive:
             return None
 
     async def get_keyword_reply(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str = None) -> str:
-        """获取关键词匹配回复（支持商品ID优先匹配）"""
+        """获取关键词匹配回复（支持商品ID优先匹配和图片类型）"""
         try:
             from db_manager import db_manager
 
-            # 获取当前账号的关键词列表（包含商品ID）
-            keywords = db_manager.get_keywords_with_item_id(self.cookie_id)
+            # 获取当前账号的关键词列表（包含类型信息）
+            keywords = db_manager.get_keywords_with_type(self.cookie_id)
 
             if not keywords:
                 logger.debug(f"账号 {self.cookie_id} 没有配置关键词")
@@ -917,38 +931,64 @@ class XianyuLive:
 
             # 1. 如果有商品ID，优先匹配该商品ID对应的关键词
             if item_id:
-                for keyword, reply, keyword_item_id in keywords:
+                for keyword_data in keywords:
+                    keyword = keyword_data['keyword']
+                    reply = keyword_data['reply']
+                    keyword_item_id = keyword_data['item_id']
+                    keyword_type = keyword_data.get('type', 'text')
+                    image_url = keyword_data.get('image_url')
+
                     if keyword_item_id == item_id and keyword.lower() in send_message.lower():
-                        # 进行变量替换
+                        logger.info(f"商品ID关键词匹配成功: 商品{item_id} '{keyword}' (类型: {keyword_type})")
+
+                        # 根据关键词类型处理
+                        if keyword_type == 'image' and image_url:
+                            # 图片类型关键词，发送图片
+                            return await self._handle_image_keyword(keyword, image_url, send_user_name, send_user_id, send_message)
+                        else:
+                            # 文本类型关键词，进行变量替换
+                            try:
+                                formatted_reply = reply.format(
+                                    send_user_name=send_user_name,
+                                    send_user_id=send_user_id,
+                                    send_message=send_message
+                                )
+                                logger.info(f"商品ID文本关键词回复: {formatted_reply}")
+                                return formatted_reply
+                            except Exception as format_error:
+                                logger.error(f"关键词回复变量替换失败: {self._safe_str(format_error)}")
+                                # 如果变量替换失败，返回原始内容
+                                return reply
+
+            # 2. 如果商品ID匹配失败或没有商品ID，匹配没有商品ID的通用关键词
+            for keyword_data in keywords:
+                keyword = keyword_data['keyword']
+                reply = keyword_data['reply']
+                keyword_item_id = keyword_data['item_id']
+                keyword_type = keyword_data.get('type', 'text')
+                image_url = keyword_data.get('image_url')
+
+                if not keyword_item_id and keyword.lower() in send_message.lower():
+                    logger.info(f"通用关键词匹配成功: '{keyword}' (类型: {keyword_type})")
+
+                    # 根据关键词类型处理
+                    if keyword_type == 'image' and image_url:
+                        # 图片类型关键词，发送图片
+                        return await self._handle_image_keyword(keyword, image_url, send_user_name, send_user_id, send_message)
+                    else:
+                        # 文本类型关键词，进行变量替换
                         try:
                             formatted_reply = reply.format(
                                 send_user_name=send_user_name,
                                 send_user_id=send_user_id,
                                 send_message=send_message
                             )
-                            logger.info(f"商品ID关键词匹配成功: 商品{item_id} '{keyword}' -> {formatted_reply}")
+                            logger.info(f"通用文本关键词回复: {formatted_reply}")
                             return formatted_reply
                         except Exception as format_error:
                             logger.error(f"关键词回复变量替换失败: {self._safe_str(format_error)}")
                             # 如果变量替换失败，返回原始内容
                             return reply
-
-            # 2. 如果商品ID匹配失败或没有商品ID，匹配没有商品ID的通用关键词
-            for keyword, reply, keyword_item_id in keywords:
-                if not keyword_item_id and keyword.lower() in send_message.lower():
-                    # 进行变量替换
-                    try:
-                        formatted_reply = reply.format(
-                            send_user_name=send_user_name,
-                            send_user_id=send_user_id,
-                            send_message=send_message
-                        )
-                        logger.info(f"通用关键词匹配成功: '{keyword}' -> {formatted_reply}")
-                        return formatted_reply
-                    except Exception as format_error:
-                        logger.error(f"关键词回复变量替换失败: {self._safe_str(format_error)}")
-                        # 如果变量替换失败，返回原始内容
-                        return reply
 
             logger.debug(f"未找到匹配的关键词: {send_message}")
             return None
@@ -956,6 +996,90 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"获取关键词回复失败: {self._safe_str(e)}")
             return None
+
+    async def _handle_image_keyword(self, keyword: str, image_url: str, send_user_name: str, send_user_id: str, send_message: str) -> str:
+        """处理图片类型关键词"""
+        try:
+            # 检查图片URL类型
+            if self._is_cdn_url(image_url):
+                # 已经是CDN链接，直接使用
+                logger.info(f"使用已有的CDN图片链接: {image_url}")
+                return f"__IMAGE_SEND__{image_url}"
+
+            elif image_url.startswith('/static/uploads/') or image_url.startswith('static/uploads/'):
+                # 本地图片，需要上传到闲鱼CDN
+                local_image_path = image_url.replace('/static/uploads/', 'static/uploads/')
+                if os.path.exists(local_image_path):
+                    logger.info(f"准备上传本地图片到闲鱼CDN: {local_image_path}")
+
+                    # 使用图片上传器上传到闲鱼CDN
+                    from utils.image_uploader import ImageUploader
+                    uploader = ImageUploader(self.cookies_str)
+
+                    async with uploader:
+                        cdn_url = await uploader.upload_image(local_image_path)
+                        if cdn_url:
+                            logger.info(f"图片上传成功，CDN URL: {cdn_url}")
+                            # 更新数据库中的图片URL为CDN URL
+                            await self._update_keyword_image_url(keyword, cdn_url)
+                            image_url = cdn_url
+                        else:
+                            logger.error(f"图片上传失败: {local_image_path}")
+                            return f"抱歉，图片发送失败，请稍后重试。"
+                else:
+                    logger.error(f"本地图片文件不存在: {local_image_path}")
+                    return f"抱歉，图片文件不存在。"
+
+            else:
+                # 其他类型的URL（可能是外部链接），直接使用
+                logger.info(f"使用外部图片链接: {image_url}")
+
+            # 发送图片（这里返回特殊标记，在调用处处理实际发送）
+            return f"__IMAGE_SEND__{image_url}"
+
+        except Exception as e:
+            logger.error(f"处理图片关键词失败: {e}")
+            return f"抱歉，图片发送失败: {str(e)}"
+
+    def _is_cdn_url(self, url: str) -> bool:
+        """检查URL是否是闲鱼CDN链接"""
+        if not url:
+            return False
+
+        # 闲鱼CDN域名列表
+        cdn_domains = [
+            'gw.alicdn.com',
+            'img.alicdn.com',
+            'cloud.goofish.com',
+            'goofish.com',
+            'taobaocdn.com',
+            'tbcdn.cn',
+            'aliimg.com'
+        ]
+
+        # 检查是否包含CDN域名
+        url_lower = url.lower()
+        for domain in cdn_domains:
+            if domain in url_lower:
+                return True
+
+        # 检查是否是HTTPS链接且包含图片特征
+        if url_lower.startswith('https://') and any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+            return True
+
+        return False
+
+    async def _update_keyword_image_url(self, keyword: str, new_image_url: str):
+        """更新关键词的图片URL"""
+        try:
+            from db_manager import db_manager
+            success = db_manager.update_keyword_image_url(self.cookie_id, keyword, new_image_url)
+            if success:
+                logger.info(f"图片URL已更新: {keyword} -> {new_image_url}")
+            else:
+                logger.warning(f"图片URL更新失败: {keyword}")
+        except Exception as e:
+            logger.error(f"更新关键词图片URL失败: {e}")
 
     async def get_ai_reply(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str, chat_id: str):
         """获取AI回复"""
@@ -1810,6 +1934,16 @@ class XianyuLive:
                     # 批量数据类型：获取并消费第一条数据
                     delivery_content = db_manager.consume_batch_data(rule['card_id'])
 
+                elif rule['card_type'] == 'image':
+                    # 图片类型：返回图片发送标记
+                    image_url = rule.get('image_url')
+                    if image_url:
+                        delivery_content = f"__IMAGE_SEND__{image_url}"
+                        logger.info(f"准备发送图片: {image_url}")
+                    else:
+                        logger.error(f"图片卡券缺少图片URL: 卡券ID={rule['card_id']}")
+                        delivery_content = None
+
                 if delivery_content:
                     # 处理备注信息和变量替换
                     final_content = self._process_delivery_content_with_description(delivery_content, rule.get('card_description', ''))
@@ -2652,10 +2786,28 @@ class XianyuLive:
 
             # 如果有回复内容，发送消息
             if reply:
-                await self.send_msg(websocket, chat_id, send_user_id, reply)
-                # 记录发出的消息
-                msg_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                logger.info(f"[{msg_time}] 【{reply_source}发出】用户: {send_user_name} (ID: {send_user_id}), 商品({item_id}): {reply}")
+                # 检查是否是图片发送标记
+                if reply.startswith("__IMAGE_SEND__"):
+                    # 提取图片URL
+                    image_url = reply.replace("__IMAGE_SEND__", "")
+                    # 发送图片消息
+                    try:
+                        await self.send_image_msg(websocket, chat_id, send_user_id, image_url)
+                        # 记录发出的图片消息
+                        msg_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                        logger.info(f"[{msg_time}] 【{reply_source}图片发出】用户: {send_user_name} (ID: {send_user_id}), 商品({item_id}): 图片 {image_url}")
+                    except Exception as e:
+                        # 图片发送失败，发送错误提示
+                        logger.error(f"图片发送失败: {self._safe_str(e)}")
+                        await self.send_msg(websocket, chat_id, send_user_id, "抱歉，图片发送失败，请稍后重试。")
+                        msg_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                        logger.error(f"[{msg_time}] 【{reply_source}图片发送失败】用户: {send_user_name} (ID: {send_user_id}), 商品({item_id})")
+                else:
+                    # 普通文本消息
+                    await self.send_msg(websocket, chat_id, send_user_id, reply)
+                    # 记录发出的消息
+                    msg_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    logger.info(f"[{msg_time}] 【{reply_source}发出】用户: {send_user_name} (ID: {send_user_id}), 商品({item_id}): {reply}")
             else:
                 msg_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 logger.info(f"[{msg_time}] 【{self.cookie_id}】【系统】未找到匹配的回复规则，不回复")
@@ -2971,6 +3123,159 @@ class XianyuLive:
             "total_saved": total_saved,
             "items": all_items
         }
+
+    async def send_image_msg(self, ws, cid, toid, image_url, width=800, height=600):
+        """发送图片消息"""
+        try:
+            # 检查图片URL是否需要上传到CDN
+            original_url = image_url
+
+            if self._is_cdn_url(image_url):
+                # 已经是CDN链接，直接使用
+                logger.info(f"【{self.cookie_id}】使用已有的CDN图片链接: {image_url}")
+            elif image_url.startswith('/static/uploads/') or image_url.startswith('static/uploads/'):
+                # 本地图片，需要上传到闲鱼CDN
+                local_image_path = image_url.replace('/static/uploads/', 'static/uploads/')
+                if os.path.exists(local_image_path):
+                    logger.info(f"【{self.cookie_id}】准备上传本地图片到闲鱼CDN: {local_image_path}")
+
+                    # 使用图片上传器上传到闲鱼CDN
+                    from utils.image_uploader import ImageUploader
+                    uploader = ImageUploader(self.cookies_str)
+
+                    async with uploader:
+                        cdn_url = await uploader.upload_image(local_image_path)
+                        if cdn_url:
+                            logger.info(f"【{self.cookie_id}】图片上传成功，CDN URL: {cdn_url}")
+                            image_url = cdn_url
+
+                            # 获取实际图片尺寸
+                            from utils.image_utils import image_manager
+                            try:
+                                actual_width, actual_height = image_manager.get_image_size(local_image_path)
+                                if actual_width and actual_height:
+                                    width, height = actual_width, actual_height
+                                    logger.info(f"【{self.cookie_id}】获取到实际图片尺寸: {width}x{height}")
+                            except Exception as e:
+                                logger.warning(f"【{self.cookie_id}】获取图片尺寸失败，使用默认尺寸: {e}")
+                        else:
+                            logger.error(f"【{self.cookie_id}】图片上传失败: {local_image_path}")
+                            raise Exception(f"图片上传失败: {local_image_path}")
+                else:
+                    logger.error(f"【{self.cookie_id}】本地图片文件不存在: {local_image_path}")
+                    raise Exception(f"本地图片文件不存在: {local_image_path}")
+            else:
+                logger.warning(f"【{self.cookie_id}】未知的图片URL格式: {image_url}")
+
+            # 记录详细的图片信息
+            logger.info(f"【{self.cookie_id}】准备发送图片消息:")
+            logger.info(f"  - 原始URL: {original_url}")
+            logger.info(f"  - CDN URL: {image_url}")
+            logger.info(f"  - 图片尺寸: {width}x{height}")
+            logger.info(f"  - 聊天ID: {cid}")
+            logger.info(f"  - 接收者ID: {toid}")
+
+            # 构造图片消息内容 - 使用正确的闲鱼格式
+            image_content = {
+                "contentType": 2,  # 图片消息类型
+                "image": {
+                    "pics": [
+                        {
+                            "height": int(height),
+                            "type": 0,
+                            "url": image_url,
+                            "width": int(width)
+                        }
+                    ]
+                }
+            }
+
+            # Base64编码
+            content_json = json.dumps(image_content, ensure_ascii=False)
+            content_base64 = str(base64.b64encode(content_json.encode('utf-8')), 'utf-8')
+
+            logger.info(f"【{self.cookie_id}】图片内容JSON: {content_json}")
+            logger.info(f"【{self.cookie_id}】Base64编码长度: {len(content_base64)}")
+
+            # 构造WebSocket消息（完全参考send_msg的格式）
+            msg = {
+                "lwp": "/r/MessageSend/sendByReceiverScope",
+                "headers": {
+                    "mid": generate_mid()
+                },
+                "body": [
+                    {
+                        "uuid": generate_uuid(),
+                        "cid": f"{cid}@goofish",
+                        "conversationType": 1,
+                        "content": {
+                            "contentType": 101,
+                            "custom": {
+                                "type": 1,
+                                "data": content_base64
+                            }
+                        },
+                        "redPointPolicy": 0,
+                        "extension": {
+                            "extJson": "{}"
+                        },
+                        "ctx": {
+                            "appVersion": "1.0",
+                            "platform": "web"
+                        },
+                        "mtags": {},
+                        "msgReadStatusSetting": 1
+                    },
+                    {
+                        "actualReceivers": [
+                            f"{toid}@goofish",
+                            f"{self.myid}@goofish"
+                        ]
+                    }
+                ]
+            }
+
+            await ws.send(json.dumps(msg))
+            logger.info(f"【{self.cookie_id}】图片消息发送成功: {image_url}")
+
+        except Exception as e:
+            logger.error(f"【{self.cookie_id}】发送图片消息失败: {self._safe_str(e)}")
+            raise
+
+    async def send_image_from_file(self, ws, cid, toid, image_path):
+        """从本地文件发送图片"""
+        try:
+            # 上传图片到闲鱼CDN
+            logger.info(f"【{self.cookie_id}】开始上传图片: {image_path}")
+
+            from utils.image_uploader import ImageUploader
+            uploader = ImageUploader(self.cookies_str)
+
+            async with uploader:
+                image_url = await uploader.upload_image(image_path)
+
+            if image_url:
+                # 获取图片信息
+                from utils.image_utils import image_manager
+                try:
+                    from PIL import Image
+                    with Image.open(image_path) as img:
+                        width, height = img.size
+                except Exception as e:
+                    logger.warning(f"无法获取图片尺寸，使用默认值: {e}")
+                    width, height = 800, 600
+
+                # 发送图片消息
+                await self.send_image_msg(ws, cid, toid, image_url, width, height)
+                logger.info(f"【{self.cookie_id}】图片发送完成: {image_path} -> {image_url}")
+                return True
+            else:
+                logger.error(f"【{self.cookie_id}】图片上传失败: {image_path}")
+                return False
+
+        except Exception as e:
+            logger.error(f"【{self.cookie_id}】从文件发送图片失败: {self._safe_str(e)}")
+            return False
 
 if __name__ == '__main__':
     cookies_str = os.getenv('COOKIES_STR')

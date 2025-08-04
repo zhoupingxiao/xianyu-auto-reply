@@ -63,7 +63,7 @@ init_config() {
     fi
 
     # 创建必要的目录
-    mkdir -p data logs backups
+    mkdir -p data logs backups static/uploads/images
     print_success "已创建必要的目录"
 }
 

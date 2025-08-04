@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -21,6 +21,7 @@ from file_log_collector import setup_file_logging, get_file_log_collector
 from ai_reply_engine import ai_reply_engine
 from utils.qr_login import qr_login_manager
 from utils.xianyu_utils import trans_cookies
+from utils.image_utils import image_manager
 from loguru import logger
 
 # 关键字文件路径
@@ -317,6 +318,11 @@ if not os.path.exists(static_dir):
 
 app.mount('/static', StaticFiles(directory=static_dir), name='static')
 
+# 确保图片上传目录存在
+uploads_dir = os.path.join(static_dir, 'uploads', 'images')
+if not os.path.exists(uploads_dir):
+    os.makedirs(uploads_dir, exist_ok=True)
+    logger.info(f"创建图片上传目录: {uploads_dir}")
 
 # 健康检查端点
 @app.get('/health')
@@ -1550,16 +1556,18 @@ def get_keywords_with_item_id(cid: str, current_user: Dict[str, Any] = Depends(g
     if cid not in user_cookies:
         raise HTTPException(status_code=403, detail="无权限访问该Cookie")
 
-    # 获取包含商品ID的关键词
-    keywords = db_manager.get_keywords_with_item_id(cid)
+    # 获取包含类型信息的关键词
+    keywords = db_manager.get_keywords_with_type(cid)
 
     # 转换为前端需要的格式
     result = []
-    for keyword, reply, item_id in keywords:
+    for keyword_data in keywords:
         result.append({
-            "keyword": keyword,
-            "reply": reply,
-            "item_id": item_id or ""
+            "keyword": keyword_data['keyword'],
+            "reply": keyword_data['reply'],
+            "item_id": keyword_data['item_id'] or "",
+            "type": keyword_data['type'],
+            "image_url": keyword_data['image_url']
         })
 
     return result
@@ -1688,17 +1696,19 @@ def export_keywords(cid: str, current_user: Dict[str, Any] = Depends(get_current
         raise HTTPException(status_code=403, detail="无权限访问该Cookie")
 
     try:
-        # 获取关键词数据
-        keywords = db_manager.get_keywords_with_item_id(cid)
+        # 获取关键词数据（包含类型信息）
+        keywords = db_manager.get_keywords_with_type(cid)
 
-        # 创建DataFrame
+        # 创建DataFrame，只导出文本类型的关键词
         data = []
-        for keyword, reply, item_id in keywords:
-            data.append({
-                '关键词': keyword,
-                '商品ID': item_id or '',
-                '关键词内容': reply
-            })
+        for keyword_data in keywords:
+            # 只导出文本类型的关键词
+            if keyword_data.get('type', 'text') == 'text':
+                data.append({
+                    '关键词': keyword_data['keyword'],
+                    '商品ID': keyword_data['item_id'] or '',
+                    '关键词内容': keyword_data['reply']
+                })
 
         # 如果没有数据，创建空的DataFrame但保留列名（作为模板）
         if not data:
@@ -1787,12 +1797,17 @@ async def import_keywords(cid: str, file: UploadFile = File(...), current_user: 
         if missing_columns:
             raise HTTPException(status_code=400, detail=f"Excel文件缺少必要的列: {', '.join(missing_columns)}")
 
-        # 获取现有关键词
-        existing_keywords = db_manager.get_keywords_with_item_id(cid)
+        # 获取现有的文本类型关键词（用于比较更新/新增）
+        existing_keywords = db_manager.get_keywords_with_type(cid)
         existing_dict = {}
-        for keyword, reply, item_id in existing_keywords:
-            key = f"{keyword}|{item_id or ''}"
-            existing_dict[key] = (keyword, reply, item_id)
+        for keyword_data in existing_keywords:
+            # 只考虑文本类型的关键词
+            if keyword_data.get('type', 'text') == 'text':
+                keyword = keyword_data['keyword']
+                reply = keyword_data['reply']
+                item_id = keyword_data['item_id']
+                key = f"{keyword}|{item_id or ''}"
+                existing_dict[key] = (keyword, reply, item_id)
 
         # 处理导入数据
         import_data = []
@@ -1821,8 +1836,8 @@ async def import_keywords(cid: str, file: UploadFile = File(...), current_user: 
         if not import_data:
             raise HTTPException(status_code=400, detail="Excel文件中没有有效的关键词数据")
 
-        # 保存到数据库
-        success = db_manager.save_keywords_with_item_id(cid, import_data)
+        # 保存到数据库（只影响文本关键词，保留图片关键词）
+        success = db_manager.save_text_keywords_only(cid, import_data)
         if not success:
             raise HTTPException(status_code=500, detail="保存关键词到数据库失败")
 
@@ -1842,6 +1857,210 @@ async def import_keywords(cid: str, file: UploadFile = File(...), current_user: 
     except Exception as e:
         logger.error(f"导入关键词失败: {e}")
         raise HTTPException(status_code=500, detail=f"导入关键词失败: {str(e)}")
+
+
+@app.post("/keywords/{cid}/image")
+async def add_image_keyword(
+    cid: str,
+    keyword: str = Form(...),
+    item_id: str = Form(default=""),
+    image: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """添加图片关键词"""
+    logger.info(f"接收到图片关键词添加请求: cid={cid}, keyword={keyword}, item_id={item_id}")
+
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查参数
+    if not keyword or not keyword.strip():
+        raise HTTPException(status_code=400, detail="关键词不能为空")
+
+    if not image or not image.filename:
+        raise HTTPException(status_code=400, detail="请选择图片文件")
+
+    # 检查cookie是否属于当前用户
+    cookie_details = db_manager.get_cookie_details(cid)
+    if not cookie_details or cookie_details['user_id'] != current_user['user_id']:
+        raise HTTPException(status_code=404, detail="账号不存在或无权限")
+
+    try:
+        logger.info(f"接收到图片关键词添加请求: cid={cid}, keyword={keyword}, item_id={item_id}, filename={image.filename}")
+
+        # 验证图片文件
+        if not image.content_type or not image.content_type.startswith('image/'):
+            logger.warning(f"无效的图片文件类型: {image.content_type}")
+            raise HTTPException(status_code=400, detail="请上传图片文件")
+
+        # 读取图片数据
+        image_data = await image.read()
+        logger.info(f"读取图片数据成功，大小: {len(image_data)} bytes")
+
+        # 保存图片
+        image_url = image_manager.save_image(image_data, image.filename)
+        if not image_url:
+            logger.error("图片保存失败")
+            raise HTTPException(status_code=400, detail="图片保存失败")
+
+        logger.info(f"图片保存成功: {image_url}")
+
+        # 先检查关键词是否已存在
+        normalized_item_id = item_id if item_id and item_id.strip() else None
+        if db_manager.check_keyword_duplicate(cid, keyword, normalized_item_id):
+            # 删除已保存的图片
+            image_manager.delete_image(image_url)
+            if normalized_item_id:
+                raise HTTPException(status_code=400, detail=f"关键词 '{keyword}' 在商品 '{normalized_item_id}' 中已存在")
+            else:
+                raise HTTPException(status_code=400, detail=f"通用关键词 '{keyword}' 已存在")
+
+        # 保存图片关键词到数据库
+        success = db_manager.save_image_keyword(cid, keyword, image_url, item_id or None)
+        if not success:
+            # 如果数据库保存失败，删除已保存的图片
+            logger.error("数据库保存失败，删除已保存的图片")
+            image_manager.delete_image(image_url)
+            raise HTTPException(status_code=400, detail="图片关键词保存失败，请稍后重试")
+
+        log_with_user('info', f"添加图片关键词成功: {cid}, 关键词: {keyword}", current_user)
+
+        return {
+            "msg": "图片关键词添加成功",
+            "keyword": keyword,
+            "image_url": image_url,
+            "item_id": item_id or None
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"添加图片关键词失败: {e}")
+        raise HTTPException(status_code=500, detail=f"添加图片关键词失败: {str(e)}")
+
+
+@app.post("/upload-image")
+async def upload_image(
+    image: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """上传图片（用于卡券等功能）"""
+    try:
+        logger.info(f"接收到图片上传请求: filename={image.filename}")
+
+        # 验证图片文件
+        if not image.content_type or not image.content_type.startswith('image/'):
+            logger.warning(f"无效的图片文件类型: {image.content_type}")
+            raise HTTPException(status_code=400, detail="请上传图片文件")
+
+        # 读取图片数据
+        image_data = await image.read()
+        logger.info(f"读取图片数据成功，大小: {len(image_data)} bytes")
+
+        # 保存图片
+        image_url = image_manager.save_image(image_data, image.filename)
+        if not image_url:
+            logger.error("图片保存失败")
+            raise HTTPException(status_code=400, detail="图片保存失败")
+
+        logger.info(f"图片上传成功: {image_url}")
+
+        return {
+            "message": "图片上传成功",
+            "image_url": image_url
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"图片上传失败: {e}")
+        raise HTTPException(status_code=500, detail=f"图片上传失败: {str(e)}")
+
+
+@app.get("/keywords-with-type/{cid}")
+def get_keywords_with_type(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取包含类型信息的关键词列表"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查cookie是否属于当前用户
+    cookie_details = db_manager.get_cookie_details(cid)
+    if not cookie_details or cookie_details['user_id'] != current_user['user_id']:
+        raise HTTPException(status_code=404, detail="账号不存在或无权限")
+
+    try:
+        keywords = db_manager.get_keywords_with_type(cid)
+        return keywords
+    except Exception as e:
+        logger.error(f"获取关键词列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取关键词列表失败: {str(e)}")
+
+
+@app.delete("/keywords/{cid}/{index}")
+def delete_keyword_by_index(cid: str, index: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """根据索引删除关键词"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+
+    # 检查cookie是否属于当前用户
+    cookie_details = db_manager.get_cookie_details(cid)
+    if not cookie_details or cookie_details['user_id'] != current_user['user_id']:
+        raise HTTPException(status_code=404, detail="账号不存在或无权限")
+
+    try:
+        # 先获取要删除的关键词信息（用于删除图片文件）
+        keywords = db_manager.get_keywords_with_type(cid)
+        if 0 <= index < len(keywords):
+            keyword_data = keywords[index]
+
+            # 删除关键词
+            success = db_manager.delete_keyword_by_index(cid, index)
+            if not success:
+                raise HTTPException(status_code=400, detail="删除关键词失败")
+
+            # 如果是图片关键词，删除对应的图片文件
+            if keyword_data.get('type') == 'image' and keyword_data.get('image_url'):
+                image_manager.delete_image(keyword_data['image_url'])
+
+            log_with_user('info', f"删除关键词成功: {cid}, 索引: {index}, 关键词: {keyword_data.get('keyword')}", current_user)
+
+            return {"msg": "删除成功"}
+        else:
+            raise HTTPException(status_code=400, detail="关键词索引无效")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除关键词失败: {e}")
+        raise HTTPException(status_code=500, detail=f"删除关键词失败: {str(e)}")
+
+
+@app.get("/debug/keywords-table-info")
+def debug_keywords_table_info(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """调试：检查keywords表结构"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect(db_manager.db_path)
+        cursor = conn.cursor()
+
+        # 获取表结构信息
+        cursor.execute("PRAGMA table_info(keywords)")
+        columns = cursor.fetchall()
+
+        # 获取数据库版本
+        cursor.execute("SELECT value FROM system_settings WHERE key = 'db_version'")
+        version_result = cursor.fetchone()
+        db_version = version_result[0] if version_result else "未知"
+
+        conn.close()
+
+        return {
+            "db_version": db_version,
+            "table_columns": [{"name": col[1], "type": col[2], "default": col[4]} for col in columns]
+        }
+    except Exception as e:
+        logger.error(f"检查表结构失败: {e}")
+        raise HTTPException(status_code=500, detail=f"检查表结构失败: {str(e)}")
 
 
 # 卡券管理API
@@ -1879,6 +2098,7 @@ def create_card(card_data: dict, current_user: Dict[str, Any] = Depends(get_curr
             api_config=card_data.get('api_config'),
             text_content=card_data.get('text_content'),
             data_content=card_data.get('data_content'),
+            image_url=card_data.get('image_url'),
             description=card_data.get('description'),
             enabled=card_data.get('enabled', True),
             delay_seconds=card_data.get('delay_seconds', 0),
@@ -3207,5 +3427,6 @@ def update_item_multi_spec(cookie_id: str, item_id: str, spec_data: dict, _: Non
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+# 移除自动启动，由Start.py或手动启动
+# if __name__ == "__main__":
+#     uvicorn.run(app, host="0.0.0.0", port=8080)

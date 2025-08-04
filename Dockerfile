@@ -86,8 +86,8 @@ RUN playwright install chromium && \
     playwright install-deps chromium
 
 # 创建必要的目录并设置权限
-RUN mkdir -p /app/logs /app/data /app/backups && \
-    chmod 777 /app/logs /app/data /app/backups
+RUN mkdir -p /app/logs /app/data /app/backups /app/static/uploads/images && \
+    chmod 777 /app/logs /app/data /app/backups /app/static/uploads /app/static/uploads/images
 
 # 注意: 为了简化权限问题，使用root用户运行
 # 在生产环境中，建议配置适当的用户映射
@@ -109,7 +109,7 @@ echo "📊 数据库将在应用启动时自动初始化..."
 echo "🎯 启动主应用..."
 
 # 确保数据目录存在
-mkdir -p /app/data /app/logs /app/backups
+mkdir -p /app/data /app/logs /app/backups /app/static/uploads/images
 
 # 启动主应用
 exec python Start.py
