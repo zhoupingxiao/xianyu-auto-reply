@@ -1,12 +1,12 @@
-// ==================== 全局变量 ====================
+// 全局变量
 const apiBase = location.origin;
 let keywordsData = {};
 let currentCookieId = '';
 let editCookieId = '';
 let authToken = localStorage.getItem('auth_token');
 let dashboardData = {
-    accounts: [],
-    totalKeywords: 0
+  accounts: [],
+  totalKeywords: 0
 };
 
 // 账号关键词缓存
@@ -14,409 +14,401 @@ let accountKeywordCache = {};
 let cacheTimestamp = 0;
 const CACHE_DURATION = 30000; // 30秒缓存
 
-// ==================== 页面导航功能 ====================
-
 // 菜单切换功能
 function showSection(sectionName) {
-    console.log('切换到页面:', sectionName); // 调试信息
+  console.log('切换到页面:', sectionName); // 调试信息
 
-    // 隐藏所有内容区域
-    document.querySelectorAll('.content-section').forEach(section => {
-        section.classList.remove('active');
-    });
+  // 隐藏所有内容区域
+  document.querySelectorAll('.content-section').forEach(section => {
+    section.classList.remove('active');
+  });
 
-    // 移除所有菜单项的active状态
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.classList.remove('active');
-    });
+  // 移除所有菜单项的active状态
+  document.querySelectorAll('.nav-link').forEach(link => {
+    link.classList.remove('active');
+  });
 
-    // 显示选中的内容区域
-    const targetSection = document.getElementById(sectionName + '-section');
-    if (targetSection) {
-        targetSection.classList.add('active');
-        console.log('页面已激活:', sectionName + '-section'); // 调试信息
-    } else {
-        console.error('找不到页面元素:', sectionName + '-section'); // 调试信息
+  // 显示选中的内容区域
+  const targetSection = document.getElementById(sectionName + '-section');
+  if (targetSection) {
+    targetSection.classList.add('active');
+    console.log('页面已激活:', sectionName + '-section'); // 调试信息
+  } else {
+    console.error('找不到页面元素:', sectionName + '-section'); // 调试信息
+  }
+
+  // 设置对应菜单项为active（修复event.target问题）
+  const menuLinks = document.querySelectorAll('.nav-link');
+  menuLinks.forEach(link => {
+    if (link.onclick && link.onclick.toString().includes(`showSection('${sectionName}')`)) {
+      link.classList.add('active');
     }
+  });
 
-    // 设置对应菜单项为active（修复event.target问题）
-    const menuLinks = document.querySelectorAll('.nav-link');
-    menuLinks.forEach(link => {
-        if (link.onclick && link.onclick.toString().includes(`showSection('${sectionName}')`)) {
-            link.classList.add('active');
+  // 根据不同section加载对应数据
+  switch(sectionName) {
+    case 'dashboard':
+      loadDashboard();
+      break;
+    case 'accounts':
+      loadCookies();
+      break;
+    case 'items':
+      loadItems();
+      break;
+    case 'auto-reply':
+      refreshAccountList();
+      break;
+    case 'cards':
+      loadCards();
+      break;
+    case 'auto-delivery':
+      loadDeliveryRules();
+      break;
+    case 'notification-channels':
+      loadNotificationChannels();
+      break;
+    case 'message-notifications':
+      loadMessageNotifications();
+      break;
+    case 'logs':
+      // 如果没有日志数据，则加载
+      setTimeout(() => {
+        if (!window.allLogs || window.allLogs.length === 0) {
+          refreshLogs();
         }
-    });
+      }, 100);
+      break;
+  }
 
-    // 根据不同section加载对应数据
-    switch (sectionName) {
-        case 'dashboard':
-            loadDashboard();
-            break;
-        case 'accounts':
-            loadCookies();
-            break;
-        case 'items':
-            loadItems();
-            break;
-        case 'auto-reply':
-            refreshAccountList();
-            break;
-        case 'cards':
-            loadCards();
-            break;
-        case 'auto-delivery':
-            loadDeliveryRules();
-            break;
-        case 'notification-channels':
-            loadNotificationChannels();
-            break;
-        case 'message-notifications':
-            loadMessageNotifications();
-            break;
-        case 'logs':
-            // 如果没有日志数据，则加载
-            setTimeout(() => {
-                if (!window.allLogs || window.allLogs.length === 0) {
-                    refreshLogs();
-                }
-            }, 100);
-            break;
+  // 如果切换到非日志页面，停止自动刷新
+  if (sectionName !== 'logs' && window.autoRefreshInterval) {
+    clearInterval(window.autoRefreshInterval);
+    window.autoRefreshInterval = null;
+    const button = document.querySelector('#autoRefreshText');
+    const icon = button?.previousElementSibling;
+    if (button) {
+      button.textContent = '开启自动刷新';
+      if (icon) icon.className = 'bi bi-play-circle me-1';
     }
-
-    // 如果切换到非日志页面，停止自动刷新
-    if (sectionName !== 'logs' && window.autoRefreshInterval) {
-        clearInterval(window.autoRefreshInterval);
-        window.autoRefreshInterval = null;
-        const button = document.querySelector('#autoRefreshText');
-        const icon = button?.previousElementSibling;
-        if (button) {
-            button.textContent = '开启自动刷新';
-            if (icon) icon.className = 'bi bi-play-circle me-1';
-        }
-    }
+  }
 }
 
 // 移动端侧边栏切换
 function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('show');
+  document.getElementById('sidebar').classList.toggle('show');
 }
-
-// ==================== 仪表盘管理 ====================
 
 // 加载仪表盘数据
 async function loadDashboard() {
-    try {
-        toggleLoading(true);
+  try {
+    toggleLoading(true);
 
-        // 获取账号列表
-        const cookiesResponse = await fetch(`${apiBase}/cookies/details`, {
-            headers: {
+    // 获取账号列表
+    const cookiesResponse = await fetch(`${apiBase}/cookies/details`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+
+    if (cookiesResponse.ok) {
+      const cookiesData = await cookiesResponse.json();
+
+      // 为每个账号获取关键词信息
+      const accountsWithKeywords = await Promise.all(
+        cookiesData.map(async (account) => {
+          try {
+            const keywordsResponse = await fetch(`${apiBase}/keywords/${account.id}`, {
+              headers: {
                 'Authorization': `Bearer ${authToken}`
-            }
-        });
-
-        if (cookiesResponse.ok) {
-            const cookiesData = await cookiesResponse.json();
-
-            // 为每个账号获取关键词信息
-            const accountsWithKeywords = await Promise.all(
-                cookiesData.map(async (account) => {
-                    try {
-                        const keywordsResponse = await fetch(`${apiBase}/keywords/${account.id}`, {
-                            headers: {
-                                'Authorization': `Bearer ${authToken}`
-                            }
-                        });
-
-                        if (keywordsResponse.ok) {
-                            const keywordsData = await keywordsResponse.json();
-                            return {
-                                ...account,
-                                keywords: keywordsData,
-                                keywordCount: keywordsData.length
-                            };
-                        } else {
-                            return {
-                                ...account,
-                                keywords: [],
-                                keywordCount: 0
-                            };
-                        }
-                    } catch (error) {
-                        console.error(`获取账号 ${account.id} 关键词失败:`, error);
-                        return {
-                            ...account,
-                            keywords: [],
-                            keywordCount: 0
-                        };
-                    }
-                })
-            );
-
-            dashboardData.accounts = accountsWithKeywords;
-
-            // 计算统计数据
-            let totalKeywords = 0;
-            let activeAccounts = 0;
-            let enabledAccounts = 0;
-
-            accountsWithKeywords.forEach(account => {
-                const keywordCount = account.keywordCount || 0;
-                const isEnabled = account.enabled === undefined ? true : account.enabled;
-
-                if (isEnabled) {
-                    enabledAccounts++;
-                    totalKeywords += keywordCount;
-                    if (keywordCount > 0) {
-                        activeAccounts++;
-                    }
-                }
+              }
             });
 
-            dashboardData.totalKeywords = totalKeywords;
+            if (keywordsResponse.ok) {
+              const keywordsData = await keywordsResponse.json();
+              return {
+                ...account,
+                keywords: keywordsData,
+                keywordCount: keywordsData.length
+              };
+            } else {
+              return {
+                ...account,
+                keywords: [],
+                keywordCount: 0
+              };
+            }
+          } catch (error) {
+            console.error(`获取账号 ${account.id} 关键词失败:`, error);
+            return {
+              ...account,
+              keywords: [],
+              keywordCount: 0
+            };
+          }
+        })
+      );
 
-            // 更新仪表盘显示
-            updateDashboardStats(accountsWithKeywords.length, totalKeywords, enabledAccounts);
-            updateDashboardAccountsList(accountsWithKeywords);
+      dashboardData.accounts = accountsWithKeywords;
+
+      // 计算统计数据
+      let totalKeywords = 0;
+      let activeAccounts = 0;
+      let enabledAccounts = 0;
+
+      accountsWithKeywords.forEach(account => {
+        const keywordCount = account.keywordCount || 0;
+        const isEnabled = account.enabled === undefined ? true : account.enabled;
+
+        if (isEnabled) {
+          enabledAccounts++;
+          totalKeywords += keywordCount;
+          if (keywordCount > 0) {
+            activeAccounts++;
+          }
         }
-    } catch (error) {
-        console.error('加载仪表盘数据失败:', error);
-        showToast('加载仪表盘数据失败', 'danger');
-    } finally {
-        toggleLoading(false);
+      });
+
+      dashboardData.totalKeywords = totalKeywords;
+
+      // 更新仪表盘显示
+      updateDashboardStats(accountsWithKeywords.length, totalKeywords, enabledAccounts);
+      updateDashboardAccountsList(accountsWithKeywords);
     }
+  } catch (error) {
+    console.error('加载仪表盘数据失败:', error);
+    showToast('加载仪表盘数据失败', 'danger');
+  } finally {
+    toggleLoading(false);
+  }
 }
 
 // 更新仪表盘统计数据
 function updateDashboardStats(totalAccounts, totalKeywords, enabledAccounts) {
-    document.getElementById('totalAccounts').textContent = totalAccounts;
-    document.getElementById('totalKeywords').textContent = totalKeywords;
-    document.getElementById('activeAccounts').textContent = enabledAccounts;
+  document.getElementById('totalAccounts').textContent = totalAccounts;
+  document.getElementById('totalKeywords').textContent = totalKeywords;
+  document.getElementById('activeAccounts').textContent = enabledAccounts;
 }
 
 // 更新仪表盘账号列表
 function updateDashboardAccountsList(accounts) {
-    const tbody = document.getElementById('dashboardAccountsList');
-    tbody.innerHTML = '';
+  const tbody = document.getElementById('dashboardAccountsList');
+  tbody.innerHTML = '';
 
-    if (accounts.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="4" class="text-center text-muted py-4">
-                    <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-                    暂无账号数据
-                </td>
-            </tr>
-        `;
-        return;
+  if (accounts.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="4" class="text-center text-muted py-4">
+          <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+          暂无账号数据
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  accounts.forEach(account => {
+    const keywordCount = account.keywordCount || 0;
+    const isEnabled = account.enabled === undefined ? true : account.enabled;
+
+    let status = '';
+    if (!isEnabled) {
+      status = '<span class="badge bg-danger">已禁用</span>';
+    } else if (keywordCount > 0) {
+      status = '<span class="badge bg-success">活跃</span>';
+    } else {
+      status = '<span class="badge bg-secondary">未配置</span>';
     }
 
-    accounts.forEach(account => {
-        const keywordCount = account.keywordCount || 0;
-        const isEnabled = account.enabled === undefined ? true : account.enabled;
-
-        let status = '';
-        if (!isEnabled) {
-            status = '<span class="badge bg-danger">已禁用</span>';
-        } else if (keywordCount > 0) {
-            status = '<span class="badge bg-success">活跃</span>';
-        } else {
-            status = '<span class="badge bg-secondary">未配置</span>';
-        }
-
-        const row = document.createElement('tr');
-        row.className = isEnabled ? '' : 'table-secondary';
-        row.innerHTML = `
-            <td>
-                <strong class="text-primary ${!isEnabled ? 'text-muted' : ''}">${account.id}</strong>
-                ${!isEnabled ? '<i class="bi bi-pause-circle-fill text-danger ms-1" title="已禁用"></i>' : ''}
-            </td>
-            <td>
-                <span class="badge ${isEnabled ? 'bg-primary' : 'bg-secondary'}">${keywordCount} 个关键词</span>
-            </td>
-            <td>${status}</td>
-            <td>
-                <small class="text-muted">${new Date().toLocaleString()}</small>
-            </td>
-        `;
-        tbody.appendChild(row);
-    });
+    const row = document.createElement('tr');
+    row.className = isEnabled ? '' : 'table-secondary';
+    row.innerHTML = `
+      <td>
+        <strong class="text-primary ${!isEnabled ? 'text-muted' : ''}">${account.id}</strong>
+        ${!isEnabled ? '<i class="bi bi-pause-circle-fill text-danger ms-1" title="已禁用"></i>' : ''}
+      </td>
+      <td>
+        <span class="badge ${isEnabled ? 'bg-primary' : 'bg-secondary'}">${keywordCount} 个关键词</span>
+      </td>
+      <td>${status}</td>
+      <td>
+        <small class="text-muted">${new Date().toLocaleString()}</small>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
 }
-
-// ==================== 关键词缓存管理 ====================
 
 // 获取账号关键词数量（带缓存）- 包含普通关键词和商品关键词
 async function getAccountKeywordCount(accountId) {
-    const now = Date.now();
+  const now = Date.now();
 
-    // 检查缓存
-    if (accountKeywordCache[accountId] && (now - cacheTimestamp) < CACHE_DURATION) {
-        return accountKeywordCache[accountId];
+  // 检查缓存
+  if (accountKeywordCache[accountId] && (now - cacheTimestamp) < CACHE_DURATION) {
+    return accountKeywordCache[accountId];
+  }
+
+  try {
+    const response = await fetch(`${apiBase}/keywords/${accountId}`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+
+    if (response.ok) {
+      const keywordsData = await response.json();
+      // 现在API返回的是包含普通关键词和商品关键词的完整列表
+      const count = keywordsData.length;
+
+      // 更新缓存
+      accountKeywordCache[accountId] = count;
+      cacheTimestamp = now;
+
+      return count;
+    } else {
+      return 0;
     }
-
-    try {
-        const response = await fetch(`${apiBase}/keywords/${accountId}`, {
-            headers: {
-                'Authorization': `Bearer ${authToken}`
-            }
-        });
-
-        if (response.ok) {
-            const keywordsData = await response.json();
-            // 现在API返回的是包含普通关键词和商品关键词的完整列表
-            const count = keywordsData.length;
-
-            // 更新缓存
-            accountKeywordCache[accountId] = count;
-            cacheTimestamp = now;
-
-            return count;
-        } else {
-            return 0;
-        }
-    } catch (error) {
-        console.error(`获取账号 ${accountId} 关键词失败:`, error);
-        return 0;
-    }
+  } catch (error) {
+    console.error(`获取账号 ${accountId} 关键词失败:`, error);
+    return 0;
+  }
 }
 
 // 清除关键词缓存
 function clearKeywordCache() {
-    accountKeywordCache = {};
-    cacheTimestamp = 0;
+  accountKeywordCache = {};
+  cacheTimestamp = 0;
 }
-
-// ==================== 账号列表管理 ====================
 
 // 刷新账号列表（用于自动回复页面）
 async function refreshAccountList() {
-    try {
-        toggleLoading(true);
+  try {
+    toggleLoading(true);
 
-        // 获取账号列表
-        const response = await fetch(`${apiBase}/cookies/details`, {
-            headers: {
+    // 获取账号列表
+    const response = await fetch(`${apiBase}/cookies/details`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+
+    if (response.ok) {
+      const accounts = await response.json();
+      const select = document.getElementById('accountSelect');
+      select.innerHTML = '<option value="">🔍 请选择一个账号开始配置...</option>';
+
+      // 为每个账号获取关键词数量
+      const accountsWithKeywords = await Promise.all(
+        accounts.map(async (account) => {
+          try {
+            const keywordsResponse = await fetch(`${apiBase}/keywords/${account.id}`, {
+              headers: {
                 'Authorization': `Bearer ${authToken}`
-            }
-        });
-
-        if (response.ok) {
-            const accounts = await response.json();
-            const select = document.getElementById('accountSelect');
-            select.innerHTML = '<option value="">🔍 请选择一个账号开始配置...</option>';
-
-            // 为每个账号获取关键词数量
-            const accountsWithKeywords = await Promise.all(
-                accounts.map(async (account) => {
-                    try {
-                        const keywordsResponse = await fetch(`${apiBase}/keywords/${account.id}`, {
-                            headers: {
-                                'Authorization': `Bearer ${authToken}`
-                            }
-                        });
-
-                        if (keywordsResponse.ok) {
-                            const keywordsData = await keywordsResponse.json();
-                            return {
-                                ...account,
-                                keywords: keywordsData,
-                                keywordCount: keywordsData.length
-                            };
-                        } else {
-                            return {
-                                ...account,
-                                keywordCount: 0
-                            };
-                        }
-                    } catch (error) {
-                        console.error(`获取账号 ${account.id} 关键词失败:`, error);
-                        return {
-                            ...account,
-                            keywordCount: 0
-                        };
-                    }
-                })
-            );
-
-            // 渲染账号选项（显示所有账号，但标识禁用状态）
-            if (accountsWithKeywords.length === 0) {
-                select.innerHTML = '<option value="">❌ 暂无账号，请先添加账号</option>';
-                return;
-            }
-
-            // 分组显示：先显示启用的账号，再显示禁用的账号
-            const enabledAccounts = accountsWithKeywords.filter(account => {
-                const enabled = account.enabled === undefined ? true : account.enabled;
-                console.log(`账号 ${account.id} 过滤状态: enabled=${account.enabled}, 判断为启用=${enabled}`);
-                return enabled;
-            });
-            const disabledAccounts = accountsWithKeywords.filter(account => {
-                const enabled = account.enabled === undefined ? true : account.enabled;
-                return !enabled;
+              }
             });
 
-            // 渲染启用的账号
-            enabledAccounts.forEach(account => {
-                const option = document.createElement('option');
-                option.value = account.id;
-
-                // 根据关键词数量显示不同的图标和样式
-                let icon = '📝';
-                let status = '';
-                if (account.keywordCount === 0) {
-                    icon = '⚪';
-                    status = ' (未配置)';
-                } else if (account.keywordCount >= 5) {
-                    icon = '🟢';
-                    status = ` (${account.keywordCount} 个关键词)`;
-                } else {
-                    icon = '🟡';
-                    status = ` (${account.keywordCount} 个关键词)`;
-                }
-
-                option.textContent = `${icon} ${account.id}${status}`;
-                select.appendChild(option);
-            });
-
-            // 如果有禁用的账号，添加分隔线和禁用账号
-            if (disabledAccounts.length > 0) {
-                // 添加分隔线
-                const separatorOption = document.createElement('option');
-                separatorOption.disabled = true;
-                separatorOption.textContent = `--- 禁用账号 (${disabledAccounts.length} 个) ---`;
-                select.appendChild(separatorOption);
-
-                // 渲染禁用的账号
-                disabledAccounts.forEach(account => {
-                    const option = document.createElement('option');
-                    option.value = account.id;
-
-                    // 禁用账号使用特殊图标和样式
-                    let icon = '🔴';
-                    let status = '';
-                    if (account.keywordCount === 0) {
-                        status = ' (未配置) [已禁用]';
-                    } else {
-                        status = ` (${account.keywordCount} 个关键词) [已禁用]`;
-                    }
-
-                    option.textContent = `${icon} ${account.id}${status}`;
-                    option.style.color = '#6b7280';
-                    option.style.fontStyle = 'italic';
-                    select.appendChild(option);
-                });
+            if (keywordsResponse.ok) {
+              const keywordsData = await keywordsResponse.json();
+              return {
+                ...account,
+                keywords: keywordsData,
+                keywordCount: keywordsData.length
+              };
+            } else {
+              return {
+                ...account,
+                keywordCount: 0
+              };
             }
+          } catch (error) {
+            console.error(`获取账号 ${account.id} 关键词失败:`, error);
+            return {
+              ...account,
+              keywordCount: 0
+            };
+          }
+        })
+      );
 
-            console.log('账号列表刷新完成，关键词统计:', accountsWithKeywords.map(a => ({ id: a.id, keywords: a.keywordCount })));
+      // 渲染账号选项（显示所有账号，但标识禁用状态）
+      if (accountsWithKeywords.length === 0) {
+        select.innerHTML = '<option value="">❌ 暂无账号，请先添加账号</option>';
+        return;
+      }
+
+      // 分组显示：先显示启用的账号，再显示禁用的账号
+      const enabledAccounts = accountsWithKeywords.filter(account => {
+        const enabled = account.enabled === undefined ? true : account.enabled;
+        console.log(`账号 ${account.id} 过滤状态: enabled=${account.enabled}, 判断为启用=${enabled}`); // 调试信息
+        return enabled;
+      });
+      const disabledAccounts = accountsWithKeywords.filter(account => {
+        const enabled = account.enabled === undefined ? true : account.enabled;
+        return !enabled;
+      });
+
+      // 渲染启用的账号
+      enabledAccounts.forEach(account => {
+        const option = document.createElement('option');
+        option.value = account.id;
+
+        // 根据关键词数量显示不同的图标和样式
+        let icon = '📝';
+        let status = '';
+        if (account.keywordCount === 0) {
+          icon = '⚪';
+          status = ' (未配置)';
+        } else if (account.keywordCount >= 5) {
+          icon = '🟢';
+          status = ` (${account.keywordCount} 个关键词)`;
         } else {
-            showToast('获取账号列表失败', 'danger');
+          icon = '🟡';
+          status = ` (${account.keywordCount} 个关键词)`;
         }
-    } catch (error) {
-        console.error('刷新账号列表失败:', error);
-        showToast('刷新账号列表失败', 'danger');
-    } finally {
-        toggleLoading(false);
+
+        option.textContent = `${icon} ${account.id}${status}`;
+        select.appendChild(option);
+      });
+
+      // 如果有禁用的账号，添加分隔线和禁用账号
+      if (disabledAccounts.length > 0) {
+        // 添加分隔线
+        const separatorOption = document.createElement('option');
+        separatorOption.disabled = true;
+        separatorOption.textContent = `--- 禁用账号 (${disabledAccounts.length} 个) ---`;
+        select.appendChild(separatorOption);
+
+        // 渲染禁用的账号
+        disabledAccounts.forEach(account => {
+          const option = document.createElement('option');
+          option.value = account.id;
+
+          // 禁用账号使用特殊图标和样式
+          let icon = '🔴';
+          let status = '';
+          if (account.keywordCount === 0) {
+            status = ' (未配置) [已禁用]';
+          } else {
+            status = ` (${account.keywordCount} 个关键词) [已禁用]`;
+          }
+
+          option.textContent = `${icon} ${account.id}${status}`;
+          option.style.color = '#6b7280';
+          option.style.fontStyle = 'italic';
+          select.appendChild(option);
+        });
+      }
+
+      console.log('账号列表刷新完成，关键词统计:', accountsWithKeywords.map(a => ({id: a.id, keywords: a.keywordCount})));
+    } else {
+      showToast('获取账号列表失败', 'danger');
     }
+  } catch (error) {
+    console.error('刷新账号列表失败:', error);
+    showToast('刷新账号列表失败', 'danger');
+  } finally {
+    toggleLoading(false);
+  }
 }
 
 // 加载账号关键词
@@ -883,167 +875,163 @@ async function deleteKeyword(cookieId, index) {
   }
 }
 
-// ==================== 通用工具函数 ====================
-
 // 显示/隐藏加载动画
 function toggleLoading(show) {
-    document.getElementById('loading').classList.toggle('d-none', !show);
+  document.getElementById('loading').classList.toggle('d-none', !show);
 }
 
 // 显示提示消息
 function showToast(message, type = 'success') {
-    const toastContainer = document.querySelector('.toast-container');
-    const toast = document.createElement('div');
-    toast.className = `toast align-items-center text-white bg-${type} border-0`;
-    toast.setAttribute('role', 'alert');
-    toast.setAttribute('aria-live', 'assertive');
-    toast.setAttribute('aria-atomic', 'true');
+  const toastContainer = document.querySelector('.toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast align-items-center text-white bg-${type} border-0`;
+  toast.setAttribute('role', 'alert');
+  toast.setAttribute('aria-live', 'assertive');
+  toast.setAttribute('aria-atomic', 'true');
 
-    toast.innerHTML = `
-        <div class="d-flex">
-            <div class="toast-body">
-                ${message}
-            </div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-        </div>
-    `;
+  toast.innerHTML = `
+    <div class="d-flex">
+      <div class="toast-body">
+        ${message}
+      </div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+  `;
 
-    toastContainer.appendChild(toast);
-    const bsToast = new bootstrap.Toast(toast, { delay: 3000 });
-    bsToast.show();
+  toastContainer.appendChild(toast);
+  const bsToast = new bootstrap.Toast(toast, { delay: 3000 });
+  bsToast.show();
 
-    // 自动移除
-    toast.addEventListener('hidden.bs.toast', () => {
-        toast.remove();
-    });
+  // 自动移除
+  toast.addEventListener('hidden.bs.toast', () => {
+    toast.remove();
+  });
 }
 
 // 错误处理
 async function handleApiError(err) {
-    console.error(err);
-    showToast(err.message || '操作失败', 'danger');
-    toggleLoading(false);
+  console.error(err);
+  showToast(err.message || '操作失败', 'danger');
+  toggleLoading(false);
 }
 
 // API请求包装
 async function fetchJSON(url, opts = {}) {
-    toggleLoading(true);
-    try {
-        // 添加认证头
-        if (authToken) {
-            opts.headers = opts.headers || {};
-            opts.headers['Authorization'] = `Bearer ${authToken}`;
-        }
-
-        const res = await fetch(url, opts);
-        if (res.status === 401) {
-            // 未授权，跳转到登录页面
-            localStorage.removeItem('auth_token');
-            window.location.href = '/';
-            return;
-        }
-        if (!res.ok) {
-            let errorMessage = `HTTP ${res.status}`;
-            try {
-                const errorText = await res.text();
-                if (errorText) {
-                    // 尝试解析JSON错误信息
-                    try {
-                        const errorJson = JSON.parse(errorText);
-                        errorMessage = errorJson.detail || errorJson.message || errorText;
-                    } catch {
-                        errorMessage = errorText;
-                    }
-                }
-            } catch {
-                errorMessage = `HTTP ${res.status} ${res.statusText}`;
-            }
-            throw new Error(errorMessage);
-        }
-        const data = await res.json();
-        toggleLoading(false);
-        return data;
-    } catch (err) {
-        handleApiError(err);
-        throw err;
+  toggleLoading(true);
+  try {
+    // 添加认证头
+    if (authToken) {
+      opts.headers = opts.headers || {};
+      opts.headers['Authorization'] = `Bearer ${authToken}`;
     }
-}
 
-// ==================== Cookie管理 ====================
+    const res = await fetch(url, opts);
+    if (res.status === 401) {
+      // 未授权，跳转到登录页面
+      localStorage.removeItem('auth_token');
+      window.location.href = '/';
+      return;
+    }
+    if (!res.ok) {
+      let errorMessage = `HTTP ${res.status}`;
+      try {
+        const errorText = await res.text();
+        if (errorText) {
+          // 尝试解析JSON错误信息
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.detail || errorJson.message || errorText;
+          } catch {
+            errorMessage = errorText;
+          }
+        }
+      } catch {
+        errorMessage = `HTTP ${res.status} ${res.statusText}`;
+      }
+      throw new Error(errorMessage);
+    }
+    const data = await res.json();
+    toggleLoading(false);
+    return data;
+  } catch (err) {
+    handleApiError(err);
+    throw err;
+  }
+}
 
 // 加载Cookie列表
 async function loadCookies() {
-    try {
-        toggleLoading(true);
-        const tbody = document.querySelector('#cookieTable tbody');
-        tbody.innerHTML = '';
+  try {
+    toggleLoading(true);
+    const tbody = document.querySelector('#cookieTable tbody');
+    tbody.innerHTML = '';
 
-        const cookieDetails = await fetchJSON(apiBase + '/cookies/details');
+    const cookieDetails = await fetchJSON(apiBase + '/cookies/details');
 
-        if (cookieDetails.length === 0) {
-            tbody.innerHTML = `
-                <tr>
-                    <td colspan="7" class="text-center py-4 text-muted empty-state">
-                        <i class="bi bi-inbox fs-1 d-block mb-3"></i>
-                        <h5>暂无账号</h5>
-                        <p class="mb-0">请添加新的闲鱼账号开始使用</p>
-                    </td>
-                </tr>
-            `;
-            return;
+    if (cookieDetails.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="text-center py-4 text-muted empty-state">
+            <i class="bi bi-inbox fs-1 d-block mb-3"></i>
+            <h5>暂无账号</h5>
+            <p class="mb-0">请添加新的闲鱼账号开始使用</p>
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    // 为每个账号获取关键词数量和默认回复设置并渲染
+    const accountsWithKeywords = await Promise.all(
+      cookieDetails.map(async (cookie) => {
+        try {
+          // 获取关键词数量
+          const keywordsResponse = await fetch(`${apiBase}/keywords/${cookie.id}`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+          });
+
+          let keywordCount = 0;
+          if (keywordsResponse.ok) {
+            const keywordsData = await keywordsResponse.json();
+            keywordCount = keywordsData.length;
+          }
+
+          // 获取默认回复设置
+          const defaultReplyResponse = await fetch(`${apiBase}/default-replies/${cookie.id}`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+          });
+
+          let defaultReply = { enabled: false, reply_content: '' };
+          if (defaultReplyResponse.ok) {
+            defaultReply = await defaultReplyResponse.json();
+          }
+
+          // 获取AI回复设置
+          const aiReplyResponse = await fetch(`${apiBase}/ai-reply-settings/${cookie.id}`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+          });
+
+          let aiReply = { ai_enabled: false, model_name: 'qwen-plus' };
+          if (aiReplyResponse.ok) {
+            aiReply = await aiReplyResponse.json();
+          }
+
+          return {
+            ...cookie,
+            keywordCount: keywordCount,
+            defaultReply: defaultReply,
+            aiReply: aiReply
+          };
+        } catch (error) {
+          return {
+            ...cookie,
+            keywordCount: 0,
+            defaultReply: { enabled: false, reply_content: '' },
+            aiReply: { ai_enabled: false, model_name: 'qwen-plus' }
+          };
         }
-
-        // 为每个账号获取关键词数量和默认回复设置并渲染
-        const accountsWithKeywords = await Promise.all(
-            cookieDetails.map(async (cookie) => {
-                try {
-                    // 获取关键词数量
-                    const keywordsResponse = await fetch(`${apiBase}/keywords/${cookie.id}`, {
-                        headers: { 'Authorization': `Bearer ${authToken}` }
-                    });
-
-                    let keywordCount = 0;
-                    if (keywordsResponse.ok) {
-                        const keywordsData = await keywordsResponse.json();
-                        keywordCount = keywordsData.length;
-                    }
-
-                    // 获取默认回复设置
-                    const defaultReplyResponse = await fetch(`${apiBase}/default-replies/${cookie.id}`, {
-                        headers: { 'Authorization': `Bearer ${authToken}` }
-                    });
-
-                    let defaultReply = { enabled: false, reply_content: '' };
-                    if (defaultReplyResponse.ok) {
-                        defaultReply = await defaultReplyResponse.json();
-                    }
-
-                    // 获取AI回复设置
-                    const aiReplyResponse = await fetch(`${apiBase}/ai-reply-settings/${cookie.id}`, {
-                        headers: { 'Authorization': `Bearer ${authToken}` }
-                    });
-
-                    let aiReply = { ai_enabled: false, model_name: 'qwen-plus' };
-                    if (aiReplyResponse.ok) {
-                        aiReply = await aiReplyResponse.json();
-                    }
-
-                    return {
-                        ...cookie,
-                        keywordCount: keywordCount,
-                        defaultReply: defaultReply,
-                        aiReply: aiReply
-                    };
-                } catch (error) {
-                    return {
-                        ...cookie,
-                        keywordCount: 0,
-                        defaultReply: { enabled: false, reply_content: '' },
-                        aiReply: { ai_enabled: false, model_name: 'qwen-plus' }
-                    };
-                }
-            })
-        );
+      })
+    );
 
     accountsWithKeywords.forEach(cookie => {
       // 使用数据库中的实际状态，默认为启用
@@ -1193,77 +1181,72 @@ async function delCookie(id) {
   }
 }
 
-/**
- * 内联编辑Cookie
- * @param {string} id - 账号ID
- * @param {string} currentValue - 当前Cookie值
- * @param {Event} event - 点击事件对象
- */
-function editCookieInline(id, currentValue, event) {
-    const row = event.target.closest('tr');
-    const cookieValueCell = row.querySelector('.cookie-value');
-    const originalContent = cookieValueCell.innerHTML;
+// 内联编辑Cookie
+function editCookieInline(id, currentValue) {
+  const row = event.target.closest('tr');
+  const cookieValueCell = row.querySelector('.cookie-value');
+  const originalContent = cookieValueCell.innerHTML;
 
-    // 存储原始数据到全局变量，避免HTML注入问题
-    window.editingCookieData = {
-        id: id,
-        originalContent: originalContent,
-        originalValue: currentValue || ''
-    };
+  // 存储原始数据到全局变量，避免HTML注入问题
+  window.editingCookieData = {
+    id: id,
+    originalContent: originalContent,
+    originalValue: currentValue || ''
+  };
 
-    // 创建编辑界面容器
-    const editContainer = document.createElement('div');
-    editContainer.className = 'd-flex gap-2';
+  // 创建编辑界面容器
+  const editContainer = document.createElement('div');
+  editContainer.className = 'd-flex gap-2';
 
-    // 创建输入框
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'form-control form-control-sm';
-    input.id = `edit-${id}`;
-    input.value = currentValue || '';
-    input.placeholder = '输入新的Cookie值';
+  // 创建输入框
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'form-control form-control-sm';
+  input.id = `edit-${id}`;
+  input.value = currentValue || '';
+  input.placeholder = '输入新的Cookie值';
 
-    // 创建保存按钮
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'btn btn-sm btn-success';
-    saveBtn.title = '保存';
-    saveBtn.innerHTML = '<i class="bi bi-check"></i>';
-    saveBtn.onclick = () => saveCookieInline(id);
+  // 创建保存按钮
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-sm btn-success';
+  saveBtn.title = '保存';
+  saveBtn.innerHTML = '<i class="bi bi-check"></i>';
+  saveBtn.onclick = () => saveCookieInline(id);
 
-    // 创建取消按钮
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn btn-sm btn-secondary';
-    cancelBtn.title = '取消';
-    cancelBtn.innerHTML = '<i class="bi bi-x"></i>';
-    cancelBtn.onclick = () => cancelCookieEdit(id);
+  // 创建取消按钮
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-sm btn-secondary';
+  cancelBtn.title = '取消';
+  cancelBtn.innerHTML = '<i class="bi bi-x"></i>';
+  cancelBtn.onclick = () => cancelCookieEdit(id);
 
-    // 组装编辑界面
-    editContainer.appendChild(input);
-    editContainer.appendChild(saveBtn);
-    editContainer.appendChild(cancelBtn);
+  // 组装编辑界面
+  editContainer.appendChild(input);
+  editContainer.appendChild(saveBtn);
+  editContainer.appendChild(cancelBtn);
 
-    // 替换原内容
-    cookieValueCell.innerHTML = '';
-    cookieValueCell.appendChild(editContainer);
+  // 替换原内容
+  cookieValueCell.innerHTML = '';
+  cookieValueCell.appendChild(editContainer);
 
-    // 聚焦输入框
-    input.focus();
-    input.select();
+  // 聚焦输入框
+  input.focus();
+  input.select();
 
-    // 添加键盘事件监听
-    input.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            saveCookieInline(id);
-        } else if (e.key === 'Escape') {
-            e.preventDefault();
-            cancelCookieEdit(id);
-        }
-    });
+  // 添加键盘事件监听
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveCookieInline(id);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelCookieEdit(id);
+    }
+  });
 
-    // 禁用该行的其他按钮
-    const actionButtons = row.querySelectorAll('.btn-group button');
-    actionButtons.forEach(btn => btn.disabled = true);
+  // 禁用该行的其他按钮
+  const actionButtons = row.querySelectorAll('.btn-group button');
+  actionButtons.forEach(btn => btn.disabled = true);
 }
 
 // 保存内联编辑的Cookie
@@ -1579,113 +1562,110 @@ async function checkAuth() {
   }
 }
 
-// ==================== 应用初始化 ====================
-
 // 初始化事件监听
 document.addEventListener('DOMContentLoaded', async () => {
-    // 首先检查认证状态
-    const isAuthenticated = await checkAuth();
-    if (!isAuthenticated) return;
+  // 首先检查认证状态
+  const isAuthenticated = await checkAuth();
+  if (!isAuthenticated) return;
+  // 添加Cookie表单提交
+  document.getElementById('addForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('cookieId').value.trim();
+    const value = document.getElementById('cookieValue').value.trim();
 
-    // 添加Cookie表单提交
-    document.getElementById('addForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const id = document.getElementById('cookieId').value.trim();
-        const value = document.getElementById('cookieValue').value.trim();
+    if (!id || !value) return;
 
-        if (!id || !value) return;
+    try {
+      await fetchJSON(apiBase + '/cookies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, value })
+      });
 
-        try {
-            await fetchJSON(apiBase + '/cookies', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, value })
-            });
+      document.getElementById('cookieId').value = '';
+      document.getElementById('cookieValue').value = '';
+      showToast(`账号 "${id}" 添加成功`);
+      loadCookies();
+    } catch (err) {
+      // 错误已在fetchJSON中处理
+    }
+  });
 
-            document.getElementById('cookieId').value = '';
-            document.getElementById('cookieValue').value = '';
-            showToast(`账号 "${id}" 添加成功`);
-            loadCookies();
-        } catch (err) {
-            // 错误已在fetchJSON中处理
-        }
-    });
+  // 增强的键盘快捷键和用户体验
+  document.getElementById('newKeyword')?.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('newReply').focus();
+    }
+  });
 
-    // 增强的键盘快捷键和用户体验
-    document.getElementById('newKeyword')?.addEventListener('keypress', function (e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            document.getElementById('newReply').focus();
-        }
-    });
+  document.getElementById('newReply')?.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addKeyword();
+    }
+  });
 
-    document.getElementById('newReply')?.addEventListener('keypress', function (e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            addKeyword();
-        }
-    });
+  // ESC键取消编辑
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && typeof window.editingIndex !== 'undefined') {
+      e.preventDefault();
+      cancelEdit();
+    }
+  });
 
-    // ESC键取消编辑
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && typeof window.editingIndex !== 'undefined') {
-            e.preventDefault();
-            cancelEdit();
-        }
-    });
+  // 输入框实时验证和提示
+  document.getElementById('newKeyword')?.addEventListener('input', function(e) {
+    const value = e.target.value.trim();
+    const addBtn = document.querySelector('.add-btn');
+    const replyInput = document.getElementById('newReply');
 
-    // 输入框实时验证和提示
-    document.getElementById('newKeyword')?.addEventListener('input', function (e) {
-        const value = e.target.value.trim();
-        const addBtn = document.querySelector('.add-btn');
-        const replyInput = document.getElementById('newReply');
+    if (value.length > 0) {
+      e.target.style.borderColor = '#10b981';
+      if (replyInput.value.trim().length > 0) {
+        addBtn.style.opacity = '1';
+        addBtn.style.transform = 'scale(1)';
+      }
+    } else {
+      e.target.style.borderColor = '#e5e7eb';
+      addBtn.style.opacity = '0.7';
+      addBtn.style.transform = 'scale(0.95)';
+    }
+  });
 
-        if (value.length > 0) {
-            e.target.style.borderColor = '#10b981';
-            if (replyInput.value.trim().length > 0) {
-                addBtn.style.opacity = '1';
-                addBtn.style.transform = 'scale(1)';
-            }
-        } else {
-            e.target.style.borderColor = '#e5e7eb';
-            addBtn.style.opacity = '0.7';
-            addBtn.style.transform = 'scale(0.95)';
-        }
-    });
+  document.getElementById('newReply')?.addEventListener('input', function(e) {
+    const value = e.target.value.trim();
+    const addBtn = document.querySelector('.add-btn');
+    const keywordInput = document.getElementById('newKeyword');
 
-    document.getElementById('newReply')?.addEventListener('input', function (e) {
-        const value = e.target.value.trim();
-        const addBtn = document.querySelector('.add-btn');
-        const keywordInput = document.getElementById('newKeyword');
+    if (value.length > 0) {
+      e.target.style.borderColor = '#10b981';
+      if (keywordInput.value.trim().length > 0) {
+        addBtn.style.opacity = '1';
+        addBtn.style.transform = 'scale(1)';
+      }
+    } else {
+      e.target.style.borderColor = '#e5e7eb';
+      addBtn.style.opacity = '0.7';
+      addBtn.style.transform = 'scale(0.95)';
+    }
+  });
 
-        if (value.length > 0) {
-            e.target.style.borderColor = '#10b981';
-            if (keywordInput.value.trim().length > 0) {
-                addBtn.style.opacity = '1';
-                addBtn.style.transform = 'scale(1)';
-            }
-        } else {
-            e.target.style.borderColor = '#e5e7eb';
-            addBtn.style.opacity = '0.7';
-            addBtn.style.transform = 'scale(0.95)';
-        }
-    });
+  // 初始加载仪表盘
+  loadDashboard();
 
-    // 初始加载仪表盘
-    loadDashboard();
+  // 点击侧边栏外部关闭移动端菜单
+  document.addEventListener('click', function(e) {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.querySelector('.mobile-toggle');
 
-    // 点击侧边栏外部关闭移动端菜单
-    document.addEventListener('click', function (e) {
-        const sidebar = document.getElementById('sidebar');
-        const toggle = document.querySelector('.mobile-toggle');
-
-        if (window.innerWidth <= 768 &&
-            !sidebar.contains(e.target) &&
-            !toggle.contains(e.target) &&
-            sidebar.classList.contains('show')) {
-            sidebar.classList.remove('show');
-        }
-    });
+    if (window.innerWidth <= 768 &&
+        !sidebar.contains(e.target) &&
+        !toggle.contains(e.target) &&
+        sidebar.classList.contains('show')) {
+      sidebar.classList.remove('show');
+    }
+  });
 });
 
 // ==================== 默认回复管理功能 ====================
@@ -1877,13 +1857,9 @@ async function saveDefaultReply() {
   }
 }
 
-/**
- * 测试默认回复（占位函数）
- * @param {string} accountId - 账号ID
- */
+// 测试默认回复（占位函数）
 function testDefaultReply(accountId) {
-    console.log('测试默认回复功能，账号ID:', accountId);
-    showToast('测试功能开发中...', 'info');
+  showToast('测试功能开发中...', 'info');
 }
 
 // ==================== AI回复配置相关函数 ====================
