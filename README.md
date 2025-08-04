@@ -116,9 +116,12 @@ xianyu-auto-reply/
 │       └── lib/                   # 前端依赖库（Bootstrap等）
 ├── 🐳 Docker部署
 │   ├── Dockerfile                 # Docker镜像构建文件
+│   ├── Dockerfile-cn              # Docker镜像构建文件（中国镜像源）
 │   ├── docker-compose.yml        # Docker Compose一键部署配置
+│   ├── docker-compose-cn.yml     # Docker Compose配置（中国镜像源）
 │   ├── docker-deploy.sh          # Docker部署管理脚本（Linux/macOS）
-│   └── docker-deploy.bat         # Docker部署管理脚本（Windows）
+│   ├── docker-deploy.bat         # Docker部署管理脚本（Windows）
+│   └── entrypoint.sh              # Docker容器启动脚本
 ├── 📋 配置文件
 │   ├── global_config.yml         # 全局配置文件（WebSocket、API等）
 │   ├── requirements.txt          # Python依赖包列表
@@ -515,7 +518,17 @@ chmod +x docker-deploy.sh
 bash docker-deploy.sh
 ```
 
-### 5. Windows系统部署
+### 5. Docker容器启动失败
+如果遇到 `exec /app/entrypoint.sh: no such file or directory` 错误：
+
+```bash
+# 确保entrypoint.sh文件存在并重新构建
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+### 6. Windows系统部署
 Windows用户推荐使用批处理脚本：
 
 ```cmd

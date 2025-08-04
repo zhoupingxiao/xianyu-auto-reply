@@ -62,6 +62,15 @@ init_config() {
         print_success "$ENV_FILE 配置文件已存在"
     fi
 
+    # 检查关键文件
+    if [ ! -f "entrypoint.sh" ]; then
+        print_error "entrypoint.sh 文件不存在，Docker容器将无法启动"
+        print_info "请确保项目文件完整"
+        exit 1
+    else
+        print_success "entrypoint.sh 文件已存在"
+    fi
+
     # 创建必要的目录
     mkdir -p data logs backups static/uploads/images
     print_success "已创建必要的目录"

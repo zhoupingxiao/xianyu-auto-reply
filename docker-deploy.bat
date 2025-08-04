@@ -48,6 +48,16 @@ if not exist "%ENV_FILE%" (
     echo %SUCCESS_PREFIX% %ENV_FILE% 配置文件已存在
 )
 
+REM 检查关键文件
+if not exist "entrypoint.sh" (
+    echo %ERROR_PREFIX% entrypoint.sh 文件不存在，Docker容器将无法启动
+    echo %INFO_PREFIX% 请确保项目文件完整
+    pause
+    exit /b 1
+) else (
+    echo %SUCCESS_PREFIX% entrypoint.sh 文件已存在
+)
+
 REM 创建必要的目录
 if not exist "data" mkdir data
 if not exist "logs" mkdir logs
