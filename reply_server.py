@@ -2148,6 +2148,7 @@ def update_card(card_id: int, card_data: dict, _: None = Depends(require_auth)):
             api_config=card_data.get('api_config'),
             text_content=card_data.get('text_content'),
             data_content=card_data.get('data_content'),
+            image_url=card_data.get('image_url'),
             description=card_data.get('description'),
             enabled=card_data.get('enabled', True),
             delay_seconds=card_data.get('delay_seconds'),
@@ -2160,6 +2161,76 @@ def update_card(card_id: int, card_data: dict, _: None = Depends(require_auth)):
         else:
             raise HTTPException(status_code=404, detail="卡券不存在")
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/cards/{card_id}/image")
+async def update_card_with_image(
+    card_id: int,
+    image: UploadFile = File(...),
+    name: str = Form(...),
+    type: str = Form(...),
+    description: str = Form(default=""),
+    delay_seconds: int = Form(default=0),
+    enabled: bool = Form(default=True),
+    is_multi_spec: bool = Form(default=False),
+    spec_name: str = Form(default=""),
+    spec_value: str = Form(default=""),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """更新带图片的卡券"""
+    try:
+        logger.info(f"接收到带图片的卡券更新请求: card_id={card_id}, name={name}, type={type}")
+
+        # 验证图片文件
+        if not image.content_type or not image.content_type.startswith('image/'):
+            logger.warning(f"无效的图片文件类型: {image.content_type}")
+            raise HTTPException(status_code=400, detail="请上传图片文件")
+
+        # 验证多规格字段
+        if is_multi_spec:
+            if not spec_name or not spec_value:
+                raise HTTPException(status_code=400, detail="多规格卡券必须提供规格名称和规格值")
+
+        # 读取图片数据
+        image_data = await image.read()
+        logger.info(f"读取图片数据成功，大小: {len(image_data)} bytes")
+
+        # 保存图片
+        image_url = image_manager.save_image(image_data, image.filename)
+        if not image_url:
+            logger.error("图片保存失败")
+            raise HTTPException(status_code=400, detail="图片保存失败")
+
+        logger.info(f"图片保存成功: {image_url}")
+
+        # 更新卡券
+        from db_manager import db_manager
+        success = db_manager.update_card(
+            card_id=card_id,
+            name=name,
+            card_type=type,
+            image_url=image_url,
+            description=description,
+            enabled=enabled,
+            delay_seconds=delay_seconds,
+            is_multi_spec=is_multi_spec,
+            spec_name=spec_name if is_multi_spec else None,
+            spec_value=spec_value if is_multi_spec else None
+        )
+
+        if success:
+            logger.info(f"卡券更新成功: {name} (ID: {card_id})")
+            return {"message": "卡券更新成功", "image_url": image_url}
+        else:
+            # 如果数据库更新失败，删除已保存的图片
+            image_manager.delete_image(image_url)
+            raise HTTPException(status_code=404, detail="卡券不存在")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新带图片的卡券失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

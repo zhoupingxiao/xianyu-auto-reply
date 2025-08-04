@@ -1682,6 +1682,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 初始化卡券图片文件选择器
     initCardImageFileSelector();
 
+    // 初始化编辑卡券图片文件选择器
+    initEditCardImageFileSelector();
+
     // 点击侧边栏外部关闭移动端菜单
     document.addEventListener('click', function(e) {
     const sidebar = document.getElementById('sidebar');
@@ -3183,6 +3186,101 @@ function hideCardImagePreview() {
     }
 }
 
+// 初始化编辑卡券图片文件选择器
+function initEditCardImageFileSelector() {
+    const fileInput = document.getElementById('editCardImageFile');
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                // 验证文件类型
+                if (!file.type.startsWith('image/')) {
+                    showToast('❌ 请选择图片文件，当前文件类型：' + file.type, 'warning');
+                    e.target.value = '';
+                    hideEditCardImagePreview();
+                    return;
+                }
+
+                // 验证文件大小（5MB）
+                if (file.size > 5 * 1024 * 1024) {
+                    showToast('❌ 图片文件大小不能超过 5MB，当前文件大小：' + (file.size / 1024 / 1024).toFixed(1) + 'MB', 'warning');
+                    e.target.value = '';
+                    hideEditCardImagePreview();
+                    return;
+                }
+
+                // 验证图片尺寸
+                validateEditCardImageDimensions(file, e.target);
+            } else {
+                hideEditCardImagePreview();
+            }
+        });
+    }
+}
+
+// 验证编辑卡券图片尺寸
+function validateEditCardImageDimensions(file, inputElement) {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = function() {
+        const width = this.naturalWidth;
+        const height = this.naturalHeight;
+
+        URL.revokeObjectURL(url);
+
+        // 检查尺寸限制
+        if (width > 4096 || height > 4096) {
+            showToast(`❌ 图片尺寸过大（${width}x${height}），最大支持 4096x4096 像素`, 'warning');
+            inputElement.value = '';
+            hideEditCardImagePreview();
+            return;
+        }
+
+        // 显示图片预览
+        showEditCardImagePreview(file);
+
+        // 如果图片较大，提示会被压缩
+        if (width > 2048 || height > 2048) {
+            showToast(`ℹ️ 图片尺寸较大（${width}x${height}），上传时将自动压缩以优化性能`, 'info');
+        } else {
+            showToast(`✅ 图片尺寸合适（${width}x${height}），可以上传`, 'success');
+        }
+    };
+
+    img.onerror = function() {
+        URL.revokeObjectURL(url);
+        showToast('❌ 无法读取图片文件，请选择有效的图片', 'warning');
+        inputElement.value = '';
+        hideEditCardImagePreview();
+    };
+
+    img.src = url;
+}
+
+// 显示编辑卡券图片预览
+function showEditCardImagePreview(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const previewImg = document.getElementById('editCardPreviewImg');
+        const previewContainer = document.getElementById('editCardImagePreview');
+
+        if (previewImg && previewContainer) {
+            previewImg.src = e.target.result;
+            previewContainer.style.display = 'block';
+        }
+    };
+    reader.readAsDataURL(file);
+}
+
+// 隐藏编辑卡券图片预览
+function hideEditCardImagePreview() {
+    const previewContainer = document.getElementById('editCardImagePreview');
+    if (previewContainer) {
+        previewContainer.style.display = 'none';
+    }
+}
+
 // 切换编辑多规格字段显示
 function toggleEditMultiSpecFields() {
     const checkbox = document.getElementById('editIsMultiSpec');
@@ -3688,6 +3786,26 @@ async function editCard(cardId) {
         document.getElementById('editTextContent').value = card.text_content || '';
         } else if (card.type === 'data') {
         document.getElementById('editDataContent').value = card.data_content || '';
+        } else if (card.type === 'image') {
+        // 处理图片类型
+        const currentImagePreview = document.getElementById('editCurrentImagePreview');
+        const currentImg = document.getElementById('editCurrentImg');
+        const noImageText = document.getElementById('editNoImageText');
+
+        if (card.image_url) {
+            // 显示当前图片
+            currentImg.src = card.image_url;
+            currentImagePreview.style.display = 'block';
+            noImageText.style.display = 'none';
+        } else {
+            // 没有图片
+            currentImagePreview.style.display = 'none';
+            noImageText.style.display = 'block';
+        }
+
+        // 清空文件选择器和预览
+        document.getElementById('editCardImageFile').value = '';
+        document.getElementById('editCardImagePreview').style.display = 'none';
         }
 
         // 显示对应的字段
@@ -3725,6 +3843,7 @@ function toggleEditCardTypeFields() {
     document.getElementById('editApiFields').style.display = cardType === 'api' ? 'block' : 'none';
     document.getElementById('editTextFields').style.display = cardType === 'text' ? 'block' : 'none';
     document.getElementById('editDataFields').style.display = cardType === 'data' ? 'block' : 'none';
+    document.getElementById('editImageFields').style.display = cardType === 'image' ? 'block' : 'none';
 }
 
 // 更新卡券
@@ -3804,6 +3923,16 @@ async function updateCard() {
         case 'data':
         cardData.data_content = document.getElementById('editDataContent').value;
         break;
+        case 'image':
+        // 处理图片类型 - 如果有新图片则上传，否则保持原有图片
+        const imageFile = document.getElementById('editCardImageFile').files[0];
+        if (imageFile) {
+            // 有新图片，需要上传
+            await updateCardWithImage(cardId, cardData, imageFile);
+            return; // 提前返回，因为上传图片是异步的
+        }
+        // 没有新图片，保持原有配置，继续正常更新流程
+        break;
     }
 
     const response = await fetch(`${apiBase}/cards/${cardId}`, {
@@ -3828,6 +3957,51 @@ async function updateCard() {
     showToast('更新卡券失败', 'danger');
     }
 }
+
+// 更新带图片的卡券
+async function updateCardWithImage(cardId, cardData, imageFile) {
+    try {
+        // 创建FormData对象
+        const formData = new FormData();
+
+        // 添加图片文件
+        formData.append('image', imageFile);
+
+        // 添加卡券数据
+        Object.keys(cardData).forEach(key => {
+            if (cardData[key] !== null && cardData[key] !== undefined) {
+                if (typeof cardData[key] === 'object') {
+                    formData.append(key, JSON.stringify(cardData[key]));
+                } else {
+                    formData.append(key, cardData[key]);
+                }
+            }
+        });
+
+        const response = await fetch(`${apiBase}/cards/${cardId}/image`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+                // 不设置Content-Type，让浏览器自动设置multipart/form-data
+            },
+            body: formData
+        });
+
+        if (response.ok) {
+            showToast('卡券更新成功', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('editCardModal')).hide();
+            loadCards();
+        } else {
+            const error = await response.text();
+            showToast(`更新失败: ${error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('更新带图片的卡券失败:', error);
+        showToast('更新卡券失败', 'danger');
+    }
+}
+
+
 
 // 测试卡券（占位函数）
 function testCard(cardId) {

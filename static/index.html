@@ -1528,6 +1528,7 @@
                 <option value="api">API接口</option>
                 <option value="text">固定文字</option>
                 <option value="data">批量数据</option>
+                <option value="image">图片</option>
               </select>
             </div>
 
@@ -1588,6 +1589,45 @@
                   <label class="form-label">数据内容 (一行一个)</label>
                   <textarea class="form-control" id="editDataContent" rows="10"></textarea>
                   <small class="form-text text-muted">支持格式：卡号:密码 或 单独的兑换码</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- 图片配置 -->
+            <div id="editImageFields" class="card mb-3" style="display: none;">
+              <div class="card-header">
+                <h6 class="mb-0">图片配置</h6>
+              </div>
+              <div class="card-body">
+                <div class="mb-3">
+                  <label class="form-label">当前图片</label>
+                  <div id="editCurrentImagePreview" style="display: none;">
+                    <img id="editCurrentImg" src="" alt="当前图片"
+                         style="max-width: 100%; max-height: 200px; border-radius: 8px; border: 1px solid #ddd;">
+                    <div class="mt-2">
+                      <small class="text-muted">当前使用的图片</small>
+                    </div>
+                  </div>
+                  <div id="editNoImageText" class="text-muted">
+                    <i class="bi bi-image me-1"></i>暂无图片
+                  </div>
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label">更换图片</label>
+                  <input type="file" class="form-control" id="editCardImageFile" accept="image/*">
+                  <small class="form-text text-muted">
+                    <i class="bi bi-info-circle me-1"></i>
+                    支持JPG、PNG、GIF格式，最大5MB，建议尺寸不超过4096x4096像素
+                  </small>
+                </div>
+
+                <div id="editCardImagePreview" class="mb-3" style="display: none;">
+                  <label class="form-label">新图片预览</label>
+                  <div class="preview-container">
+                    <img id="editCardPreviewImg" src="" alt="预览图片"
+                         style="max-width: 100%; max-height: 300px; border-radius: 8px; border: 1px solid #ddd;">
+                  </div>
                 </div>
               </div>
             </div>

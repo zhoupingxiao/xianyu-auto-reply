@@ -261,11 +261,23 @@ class XianyuLive:
 
                     # 检查是否是图片发送标记
                     if delivery_content.startswith("__IMAGE_SEND__"):
-                        # 提取图片URL
-                        image_url = delivery_content.replace("__IMAGE_SEND__", "")
+                        # 提取卡券ID和图片URL
+                        image_data = delivery_content.replace("__IMAGE_SEND__", "")
+                        if "|" in image_data:
+                            card_id_str, image_url = image_data.split("|", 1)
+                            try:
+                                card_id = int(card_id_str)
+                            except ValueError:
+                                logger.error(f"无效的卡券ID: {card_id_str}")
+                                card_id = None
+                        else:
+                            # 兼容旧格式（没有卡券ID）
+                            card_id = None
+                            image_url = image_data
+
                         # 发送图片消息
                         try:
-                            await self.send_image_msg(websocket, chat_id, send_user_id, image_url)
+                            await self.send_image_msg(websocket, chat_id, send_user_id, image_url, card_id=card_id)
                             logger.info(f'[{msg_time}] 【自动发货图片】已向 {user_url} 发送图片: {image_url}')
                             await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "发货成功")
                         except Exception as e:
@@ -1080,6 +1092,18 @@ class XianyuLive:
                 logger.warning(f"图片URL更新失败: {keyword}")
         except Exception as e:
             logger.error(f"更新关键词图片URL失败: {e}")
+
+    async def _update_card_image_url(self, card_id: int, new_image_url: str):
+        """更新卡券的图片URL"""
+        try:
+            from db_manager import db_manager
+            success = db_manager.update_card_image_url(card_id, new_image_url)
+            if success:
+                logger.info(f"卡券图片URL已更新: 卡券ID={card_id} -> {new_image_url}")
+            else:
+                logger.warning(f"卡券图片URL更新失败: 卡券ID={card_id}")
+        except Exception as e:
+            logger.error(f"更新卡券图片URL失败: {e}")
 
     async def get_ai_reply(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str, chat_id: str):
         """获取AI回复"""
@@ -1935,11 +1959,11 @@ class XianyuLive:
                     delivery_content = db_manager.consume_batch_data(rule['card_id'])
 
                 elif rule['card_type'] == 'image':
-                    # 图片类型：返回图片发送标记
+                    # 图片类型：返回图片发送标记，包含卡券ID
                     image_url = rule.get('image_url')
                     if image_url:
-                        delivery_content = f"__IMAGE_SEND__{image_url}"
-                        logger.info(f"准备发送图片: {image_url}")
+                        delivery_content = f"__IMAGE_SEND__{rule['card_id']}|{image_url}"
+                        logger.info(f"准备发送图片: {image_url} (卡券ID: {rule['card_id']})")
                     else:
                         logger.error(f"图片卡券缺少图片URL: 卡券ID={rule['card_id']}")
                         delivery_content = None
@@ -2788,7 +2812,7 @@ class XianyuLive:
             if reply:
                 # 检查是否是图片发送标记
                 if reply.startswith("__IMAGE_SEND__"):
-                    # 提取图片URL
+                    # 提取图片URL（关键词回复不包含卡券ID）
                     image_url = reply.replace("__IMAGE_SEND__", "")
                     # 发送图片消息
                     try:
@@ -3124,7 +3148,7 @@ class XianyuLive:
             "items": all_items
         }
 
-    async def send_image_msg(self, ws, cid, toid, image_url, width=800, height=600):
+    async def send_image_msg(self, ws, cid, toid, image_url, width=800, height=600, card_id=None):
         """发送图片消息"""
         try:
             # 检查图片URL是否需要上传到CDN
@@ -3148,6 +3172,10 @@ class XianyuLive:
                         if cdn_url:
                             logger.info(f"【{self.cookie_id}】图片上传成功，CDN URL: {cdn_url}")
                             image_url = cdn_url
+
+                            # 如果是卡券图片，更新数据库中的图片URL
+                            if card_id is not None:
+                                await self._update_card_image_url(card_id, cdn_url)
 
                             # 获取实际图片尺寸
                             from utils.image_utils import image_manager

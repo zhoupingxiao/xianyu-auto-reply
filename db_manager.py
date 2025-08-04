@@ -2545,8 +2545,9 @@ class DBManager:
 
     def update_card(self, card_id: int, name: str = None, card_type: str = None,
                    api_config=None, text_content: str = None, data_content: str = None,
-                   description: str = None, enabled: bool = None, delay_seconds: int = None,
-                   is_multi_spec: bool = None, spec_name: str = None, spec_value: str = None):
+                   image_url: str = None, description: str = None, enabled: bool = None,
+                   delay_seconds: int = None, is_multi_spec: bool = None, spec_name: str = None,
+                   spec_value: str = None):
         """更新卡券"""
         with self.lock:
             try:
@@ -2580,6 +2581,9 @@ class DBManager:
                 if data_content is not None:
                     update_fields.append("data_content = ?")
                     params.append(data_content)
+                if image_url is not None:
+                    update_fields.append("image_url = ?")
+                    params.append(image_url)
                 if description is not None:
                     update_fields.append("description = ?")
                     params.append(description)
@@ -2619,6 +2623,32 @@ class DBManager:
                 logger.error(f"更新卡券失败: {e}")
                 self.conn.rollback()
                 raise
+
+    def update_card_image_url(self, card_id: int, new_image_url: str) -> bool:
+        """更新卡券的图片URL"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 更新图片URL
+                self._execute_sql(cursor,
+                    "UPDATE cards SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = 'image'",
+                    (new_image_url, card_id))
+
+                self.conn.commit()
+
+                # 检查是否有行被更新
+                if cursor.rowcount > 0:
+                    logger.info(f"卡券图片URL更新成功: 卡券ID: {card_id}, 新URL: {new_image_url}")
+                    return True
+                else:
+                    logger.warning(f"未找到匹配的图片卡券: 卡券ID: {card_id}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"更新卡券图片URL失败: {e}")
+                self.conn.rollback()
+                return False
 
     # ==================== 自动发货规则方法 ====================
 
