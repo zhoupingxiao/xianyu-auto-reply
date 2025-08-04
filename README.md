@@ -72,6 +72,7 @@
 - **多规格卡券管理** - 支持创建和管理多规格卡券
 - **发货规则管理** - 支持多规格发货规则的创建和管理
 - **数据备份** - 自动数据备份和恢复
+- **一键部署** - 提供预构建Docker镜像，无需编译即可快速部署
 
 ## 📁 项目结构
 
@@ -140,7 +141,35 @@ xianyu-auto-reply/
 
 ## 🚀 快速开始
 
+**⚡ 最快部署方式（推荐）**：使用预构建镜像，无需下载源码，一条命令即可启动！
+
 ### 方式一：Docker 一键部署（最简单）
+
+```bash
+# 1. 创建数据目录
+mkdir -p xianyu-auto-reply
+
+# 2. 一键启动容器
+docker run -d \
+  -p 8080:8080 \
+  -v $PWD/xianyu-auto-reply/:/app/data/ \
+  --name xianyu-auto-reply \
+  registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0
+
+# 3. 访问系统
+# http://localhost:8080
+```
+
+**Windows用户**：
+```cmd
+# 创建数据目录
+mkdir xianyu-auto-reply
+
+# 启动容器
+docker run -d -p 8080:8080 -v %cd%/xianyu-auto-reply/:/app/data/ --name xianyu-auto-reply registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0
+```
+
+### 方式二：从源码构建部署
 
 ```bash
 # 1. 克隆项目
@@ -167,23 +196,6 @@ bash docker-deploy.sh
 
 # 或者直接使用Docker Compose
 docker-compose up -d --build
-```
-
-### 方式二：Docker Compose 手动部署
-
-```bash
-# 1. 克隆项目
-git clone https://github.com/zhinianboke/xianyu-auto-reply.git
-cd xianyu-auto-reply
-
-# 2. 构建并启动服务
-docker-compose up -d --build
-
-# 3. 查看服务状态
-docker-compose ps
-
-# 4. 访问系统
-# http://localhost:8080
 ```
 
 ### 方式三：本地开发部署
@@ -528,7 +540,17 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
-### 6. Windows系统部署
+### 6. 预构建镜像拉取失败
+如果无法拉取预构建镜像，可以使用源码构建：
+
+```bash
+# 克隆项目并从源码构建
+git clone https://github.com/zhinianboke/xianyu-auto-reply.git
+cd xianyu-auto-reply
+./docker-deploy.sh
+```
+
+### 7. Windows系统部署
 Windows用户推荐使用批处理脚本：
 
 ```cmd
