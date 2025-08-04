@@ -99,22 +99,8 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# 创建启动脚本
-COPY <<EOF /app/entrypoint.sh
-#!/bin/bash
-set -e
-
-echo "🚀 启动闲鱼自动回复系统..."
-echo "📊 数据库将在应用启动时自动初始化..."
-echo "🎯 启动主应用..."
-
-# 确保数据目录存在
-mkdir -p /app/data /app/logs /app/backups /app/static/uploads/images
-
-# 启动主应用
-exec python Start.py
-EOF
-
+# 复制启动脚本
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # 启动命令
