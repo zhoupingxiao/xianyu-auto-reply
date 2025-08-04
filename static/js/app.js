@@ -1,5 +1,7 @@
 
-// 全局变量
+// ================================
+// 全局变量和配置
+// ================================
 const apiBase = location.origin;
 let keywordsData = {};
 let currentCookieId = '';
@@ -15,7 +17,9 @@ let accountKeywordCache = {};
 let cacheTimestamp = 0;
 const CACHE_DURATION = 30000; // 30秒缓存
 
-// 菜单切换功能
+// ================================
+// 通用功能 - 菜单切换和导航
+// ================================
 function showSection(sectionName) {
     console.log('切换到页面:', sectionName); // 调试信息
 
@@ -48,31 +52,31 @@ function showSection(sectionName) {
 
     // 根据不同section加载对应数据
     switch(sectionName) {
-    case 'dashboard':
+    case 'dashboard':        // 【仪表盘菜单】
         loadDashboard();
         break;
-    case 'accounts':
+    case 'accounts':         // 【账号管理菜单】
         loadCookies();
         break;
-    case 'items':
+    case 'items':           // 【商品管理菜单】
         loadItems();
         break;
-    case 'auto-reply':
+    case 'auto-reply':      // 【自动回复菜单】
         refreshAccountList();
         break;
-    case 'cards':
+    case 'cards':           // 【卡券管理菜单】
         loadCards();
         break;
-    case 'auto-delivery':
+    case 'auto-delivery':   // 【自动发货菜单】
         loadDeliveryRules();
         break;
-    case 'notification-channels':
+    case 'notification-channels':  // 【通知渠道菜单】
         loadNotificationChannels();
         break;
-    case 'message-notifications':
+    case 'message-notifications':  // 【消息通知菜单】
         loadMessageNotifications();
         break;
-    case 'logs':
+    case 'logs':            // 【日志管理菜单】
         // 如果没有日志数据，则加载
         setTimeout(() => {
         if (!window.allLogs || window.allLogs.length === 0) {
@@ -99,6 +103,10 @@ function showSection(sectionName) {
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('show');
 }
+
+// ================================
+// 【仪表盘菜单】相关功能
+// ================================
 
 // 加载仪表盘数据
 async function loadDashboard() {
@@ -280,6 +288,10 @@ function clearKeywordCache() {
     accountKeywordCache = {};
     cacheTimestamp = 0;
 }
+
+// ================================
+// 【自动回复菜单】相关功能
+// ================================
 
 // 刷新账号列表（用于自动回复页面）
 async function refreshAccountList() {
@@ -902,6 +914,10 @@ function toggleLoading(show) {
     document.getElementById('loading').classList.toggle('d-none', !show);
 }
 
+// ================================
+// 通用工具函数
+// ================================
+
 // 显示提示消息
 function showToast(message, type = 'success') {
     const toastContainer = document.querySelector('.toast-container');
@@ -980,6 +996,10 @@ async function fetchJSON(url, opts = {}) {
     throw err;
     }
 }
+
+// ================================
+// 【账号管理菜单】相关功能
+// ================================
 
 // 加载Cookie列表
 async function loadCookies() {
@@ -2109,7 +2129,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// ==================== 通知渠道管理功能 ====================
+// ================================
+// 【通知渠道菜单】相关功能
+// ================================
 
 // 通知渠道类型配置
 const channelTypeConfigs = {
@@ -2691,7 +2713,9 @@ async function updateNotificationChannel() {
     }
 }
 
-// ==================== 消息通知配置功能 ====================
+// ================================
+// 【消息通知菜单】相关功能
+// ================================
 
 // 加载消息通知配置
 async function loadMessageNotifications() {
@@ -2920,7 +2944,9 @@ async function saveAccountNotification() {
     }
 }
 
-// ==================== 卡券管理功能 ====================
+// ================================
+// 【卡券管理菜单】相关功能
+// ================================
 
 // 加载卡券列表
 async function loadCards() {
@@ -3505,7 +3531,9 @@ async function saveCard() {
     showToast(`网络错误: ${error.message}`, 'danger');
     }
 }
-// ==================== 自动发货功能 ====================
+// ================================
+// 【自动发货菜单】相关功能
+// ================================
 
 // 加载发货规则列表
 async function loadDeliveryRules() {
@@ -4631,7 +4659,9 @@ async function reloadSystemCache() {
     }
 }
 
-// ==================== 商品管理功能 ====================
+// ================================
+// 【商品管理菜单】相关功能
+// ================================
 
 // 切换商品多规格状态
 async function toggleItemMultiSpec(cookieId, itemId, isMultiSpec) {
@@ -5238,7 +5268,9 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ==================== 日志管理功能 ====================
+// ================================
+// 【日志管理菜单】相关功能
+// ================================
 
 window.autoRefreshInterval = null;
 window.allLogs = [];
