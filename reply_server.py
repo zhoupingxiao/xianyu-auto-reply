@@ -85,6 +85,8 @@ class LoginResponse(BaseModel):
     token: Optional[str] = None
     message: str
     user_id: Optional[int] = None
+    username: Optional[str] = None
+    is_admin: Optional[bool] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -397,6 +399,33 @@ async def login_page():
 # 注册页面路由
 @app.get('/register.html', response_class=HTMLResponse)
 async def register_page():
+    # 检查注册是否开启
+    from db_manager import db_manager
+    registration_enabled = db_manager.get_system_setting('registration_enabled')
+    if registration_enabled != 'true':
+        return HTMLResponse('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>注册已关闭</title>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                .message { color: #666; font-size: 18px; }
+                .back-link { margin-top: 20px; }
+                .back-link a { color: #007bff; text-decoration: none; }
+            </style>
+        </head>
+        <body>
+            <h2>🚫 注册功能已关闭</h2>
+            <p class="message">系统管理员已关闭用户注册功能</p>
+            <div class="back-link">
+                <a href="/">← 返回首页</a>
+            </div>
+        </body>
+        </html>
+        ''', status_code=403)
+
     register_path = os.path.join(static_dir, 'register.html')
     if os.path.exists(register_path):
         with open(register_path, 'r', encoding='utf-8') as f:
@@ -491,7 +520,9 @@ async def login(request: LoginRequest):
                     success=True,
                     token=token,
                     message="登录成功",
-                    user_id=user['id']
+                    user_id=user['id'],
+                    username=user['username'],
+                    is_admin=(user['username'] == ADMIN_USERNAME)
                 )
 
         logger.warning(f"【{request.username}】登录失败：用户名或密码错误")
@@ -520,7 +551,9 @@ async def login(request: LoginRequest):
                 success=True,
                 token=token,
                 message="登录成功",
-                user_id=user['id']
+                user_id=user['id'],
+                username=user['username'],
+                is_admin=(user['username'] == ADMIN_USERNAME)
             )
 
         logger.warning(f"【{request.email}】邮箱登录失败：邮箱或密码错误")
@@ -564,7 +597,9 @@ async def login(request: LoginRequest):
             success=True,
             token=token,
             message="登录成功",
-            user_id=user['id']
+            user_id=user['id'],
+            username=user['username'],
+            is_admin=(user['username'] == ADMIN_USERNAME)
         )
 
     else:
@@ -581,7 +616,8 @@ async def verify(user_info: Optional[Dict[str, Any]] = Depends(verify_token)):
         return {
             "authenticated": True,
             "user_id": user_info['user_id'],
-            "username": user_info['username']
+            "username": user_info['username'],
+            "is_admin": user_info['username'] == ADMIN_USERNAME
         }
     return {"authenticated": False}
 
@@ -758,6 +794,15 @@ async def send_verification_code(request: SendCodeRequest):
 @app.post('/register')
 async def register(request: RegisterRequest):
     from db_manager import db_manager
+
+    # 检查注册是否开启
+    registration_enabled = db_manager.get_system_setting('registration_enabled')
+    if registration_enabled != 'true':
+        logger.warning(f"【{request.username}】注册失败: 注册功能已关闭")
+        return RegisterResponse(
+            success=False,
+            message="注册功能已关闭，请联系管理员"
+        )
 
     try:
         logger.info(f"【{request.username}】尝试注册，邮箱: {request.email}")
@@ -1417,6 +1462,66 @@ def update_system_setting(key: str, setting_data: SystemSettingIn, _: None = Dep
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ------------------------- 注册设置接口 -------------------------
+
+@app.get('/registration-status')
+def get_registration_status():
+    """获取注册开关状态（公开接口，无需认证）"""
+    from db_manager import db_manager
+    try:
+        enabled_str = db_manager.get_system_setting('registration_enabled')
+        logger.info(f"从数据库获取的注册设置值: '{enabled_str}'")  # 调试信息
+
+        # 如果设置不存在，默认为开启
+        if enabled_str is None:
+            enabled_bool = True
+            message = '注册功能已开启'
+        else:
+            enabled_bool = enabled_str == 'true'
+            message = '注册功能已开启' if enabled_bool else '注册功能已关闭'
+
+        logger.info(f"解析后的注册状态: enabled={enabled_bool}, message='{message}'")  # 调试信息
+
+        return {
+            'enabled': enabled_bool,
+            'message': message
+        }
+    except Exception as e:
+        logger.error(f"获取注册状态失败: {e}")
+        return {'enabled': True, 'message': '注册功能已开启'}  # 出错时默认开启
+
+
+class RegistrationSettingUpdate(BaseModel):
+    enabled: bool
+
+
+@app.put('/registration-settings')
+def update_registration_settings(setting_data: RegistrationSettingUpdate, admin_user: Dict[str, Any] = Depends(require_admin)):
+    """更新注册开关设置（仅管理员）"""
+    from db_manager import db_manager
+    try:
+        enabled = setting_data.enabled
+        success = db_manager.set_system_setting(
+            'registration_enabled',
+            'true' if enabled else 'false',
+            '是否开启用户注册'
+        )
+        if success:
+            log_with_user('info', f"更新注册设置: {'开启' if enabled else '关闭'}", admin_user)
+            return {
+                'success': True,
+                'enabled': enabled,
+                'message': f"注册功能已{'开启' if enabled else '关闭'}"
+            }
+        else:
+            raise HTTPException(status_code=500, detail='更新注册设置失败')
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新注册设置失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

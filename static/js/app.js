@@ -76,6 +76,9 @@ function showSection(sectionName) {
     case 'message-notifications':  // 【消息通知菜单】
         loadMessageNotifications();
         break;
+    case 'system-settings':    // 【系统设置菜单】
+        loadSystemSettings();
+        break;
     case 'logs':            // 【日志管理菜单】
         // 如果没有日志数据，则加载
         setTimeout(() => {
@@ -1649,7 +1652,7 @@ async function checkAuth() {
     }
 
     // 检查是否为管理员，显示管理员菜单和功能
-    if (result.username === 'admin') {
+    if (result.is_admin === true) {
         const adminMenuSection = document.getElementById('adminMenuSection');
         if (adminMenuSection) {
         adminMenuSection.style.display = 'block';
@@ -1659,6 +1662,12 @@ async function checkAuth() {
         const backupManagement = document.getElementById('backup-management');
         if (backupManagement) {
         backupManagement.style.display = 'block';
+        }
+
+        // 显示注册设置功能
+        const registrationSettings = document.getElementById('registration-settings');
+        if (registrationSettings) {
+        registrationSettings.style.display = 'block';
         }
     }
 
@@ -6472,4 +6481,106 @@ function editRemark(cookieId, currentRemark) {
     // 聚焦并选中文本
     input.focus();
     input.select();
+}
+
+// ==================== 系统设置功能 ====================
+
+// 加载系统设置
+async function loadSystemSettings() {
+    console.log('加载系统设置');
+
+    // 通过验证接口获取用户信息（更可靠）
+    try {
+        const response = await fetch(`${apiBase}/verify`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            const isAdmin = result.is_admin === true;
+
+            console.log('用户信息:', result, '是否管理员:', isAdmin);
+
+            // 显示/隐藏注册设置（仅管理员可见）
+            const registrationSettings = document.getElementById('registration-settings');
+            if (registrationSettings) {
+                registrationSettings.style.display = isAdmin ? 'block' : 'none';
+            }
+
+            // 如果是管理员，加载注册设置
+            if (isAdmin) {
+                await loadRegistrationSettings();
+            }
+        }
+    } catch (error) {
+        console.error('获取用户信息失败:', error);
+        // 出错时隐藏管理员功能
+        const registrationSettings = document.getElementById('registration-settings');
+        if (registrationSettings) {
+            registrationSettings.style.display = 'none';
+        }
+    }
+}
+
+// 加载注册设置
+async function loadRegistrationSettings() {
+    try {
+        const response = await fetch('/registration-status');
+        if (response.ok) {
+            const data = await response.json();
+            const checkbox = document.getElementById('registrationEnabled');
+            if (checkbox) {
+                checkbox.checked = data.enabled;
+            }
+        }
+    } catch (error) {
+        console.error('加载注册设置失败:', error);
+        showToast('加载注册设置失败', 'danger');
+    }
+}
+
+// 更新注册设置
+async function updateRegistrationSettings() {
+    const checkbox = document.getElementById('registrationEnabled');
+    const statusDiv = document.getElementById('registrationStatus');
+    const statusText = document.getElementById('registrationStatusText');
+
+    if (!checkbox) return;
+
+    const enabled = checkbox.checked;
+
+    try {
+        const response = await fetch('/registration-settings', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ enabled: enabled })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            showToast(data.message, 'success');
+
+            // 显示状态信息
+            if (statusDiv && statusText) {
+                statusText.textContent = data.message;
+                statusDiv.style.display = 'block';
+
+                // 3秒后隐藏状态信息
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+            }
+        } else {
+            const errorData = await response.json();
+            showToast(`更新失败: ${errorData.detail || '未知错误'}`, 'danger');
+        }
+    } catch (error) {
+        console.error('更新注册设置失败:', error);
+        showToast('更新注册设置失败', 'danger');
+    }
 }

@@ -342,7 +342,8 @@ class DBManager:
             # 插入默认系统设置（不包括管理员密码，由reply_server.py初始化）
             cursor.execute('''
             INSERT OR IGNORE INTO system_settings (key, value, description) VALUES
-            ('theme_color', 'blue', '主题颜色')
+            ('theme_color', 'blue', '主题颜色'),
+            ('registration_enabled', 'true', '是否开启用户注册')
             ''')
 
             # 检查并升级数据库

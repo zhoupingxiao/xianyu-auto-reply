@@ -218,7 +218,7 @@
       </form>
 
       <!-- 注册链接 -->
-      <div class="text-center mt-3">
+      <div id="registerSection" class="text-center mt-3">
         <span class="text-muted">还没有账号？</span>
         <a href="/register.html" class="text-decoration-none">
           <i class="bi bi-person-plus me-1"></i>立即注册
@@ -376,6 +376,14 @@
         if (result.success) {
           // 保存token到localStorage
           localStorage.setItem('auth_token', result.token);
+
+          // 保存用户信息到localStorage
+          const userInfo = {
+            user_id: result.user_id,
+            username: result.username,
+            is_admin: result.is_admin
+          };
+          localStorage.setItem('user_info', JSON.stringify(userInfo));
 
           // 检查是否有重定向URL
           const redirectUrl = localStorage.getItem('redirectAfterLogin');
@@ -634,8 +642,28 @@
       }
     }
 
+    // 检查注册状态
+    async function checkRegistrationStatus() {
+      try {
+        const response = await fetch('/registration-status');
+        if (response.ok) {
+          const data = await response.json();
+          const registerSection = document.getElementById('registerSection');
+          if (registerSection) {
+            registerSection.style.display = data.enabled ? 'block' : 'none';
+          }
+        }
+      } catch (error) {
+        console.error('检查注册状态失败:', error);
+        // 出错时默认显示注册链接
+      }
+    }
+
     // 事件监听器
     document.addEventListener('DOMContentLoaded', function() {
+      // 检查注册状态
+      checkRegistrationStatus();
+
       // 登录方式切换
       document.querySelectorAll('input[name="loginType"]').forEach(radio => {
         radio.addEventListener('change', switchLoginType);
