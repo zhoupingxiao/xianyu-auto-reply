@@ -424,6 +424,42 @@ async function refreshAccountList() {
     }
 }
 
+// 只刷新关键词列表（不重新加载商品列表等其他数据）
+async function refreshKeywordsList() {
+    if (!currentCookieId) {
+        console.warn('没有选中的账号，无法刷新关键词列表');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${apiBase}/keywords-with-item-id/${currentCookieId}`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log('刷新关键词列表，从服务器获取的数据:', data);
+
+            // 更新缓存数据
+            keywordsData[currentCookieId] = data;
+
+            // 只重新渲染关键词列表
+            renderKeywordsList(data);
+
+            // 清除关键词缓存
+            clearKeywordCache();
+        } else {
+            console.error('刷新关键词列表失败:', response.status);
+            showToast('刷新关键词列表失败', 'danger');
+        }
+    } catch (error) {
+        console.error('刷新关键词列表失败:', error);
+        showToast('刷新关键词列表失败', 'danger');
+    }
+}
+
 // 加载账号关键词
 async function loadAccountKeywords() {
     const accountId = document.getElementById('accountSelect').value;
@@ -588,22 +624,32 @@ async function addKeyword() {
         currentKeywords.splice(window.editingIndex, 1);
     }
 
-    // 准备要保存的关键词列表
-    let keywordsToSave = [...currentKeywords];
+    // 准备要保存的关键词列表（只包含文本类型的关键字）
+    let textKeywords = currentKeywords.filter(item => (item.type || 'text') === 'text');
 
     // 如果是编辑模式，先移除原关键词
     if (isEditMode && typeof window.editingIndex !== 'undefined') {
-        keywordsToSave.splice(window.editingIndex, 1);
+        // 需要重新计算在文本关键字中的索引
+        const originalKeyword = keywordsData[currentCookieId][window.editingIndex];
+        const textIndex = textKeywords.findIndex(item =>
+            item.keyword === originalKeyword.keyword &&
+            (item.item_id || '') === (originalKeyword.item_id || '')
+        );
+        if (textIndex !== -1) {
+            textKeywords.splice(textIndex, 1);
+        }
     }
 
-    // 检查关键词是否已存在（考虑商品ID）
-    const existingKeyword = keywordsToSave.find(item =>
+    // 检查关键词是否已存在（考虑商品ID，检查所有类型的关键词）
+    const allKeywords = keywordsData[currentCookieId] || [];
+    const existingKeyword = allKeywords.find(item =>
         item.keyword === keyword &&
         (item.item_id || '') === (itemId || '')
     );
     if (existingKeyword) {
         const itemIdText = itemId ? `（商品ID: ${itemId}）` : '（通用关键词）';
-        showToast(`关键词 "${keyword}" ${itemIdText} 已存在，请使用其他关键词或商品ID`, 'warning');
+        const typeText = existingKeyword.type === 'image' ? '图片' : '文本';
+        showToast(`关键词 "${keyword}" ${itemIdText} 已存在（${typeText}关键词），请使用其他关键词或商品ID`, 'warning');
         toggleLoading(false);
         return;
     }
@@ -614,7 +660,7 @@ async function addKeyword() {
         reply: reply,
         item_id: itemId || ''
     };
-    keywordsToSave.push(newKeyword);
+    textKeywords.push(newKeyword);
 
     const response = await fetch(`${apiBase}/keywords-with-item-id/${currentCookieId}`, {
         method: 'POST',
@@ -623,7 +669,7 @@ async function addKeyword() {
         'Authorization': `Bearer ${authToken}`
         },
         body: JSON.stringify({
-        keywords: keywordsToSave
+        keywords: textKeywords
         })
     });
 
@@ -667,12 +713,26 @@ async function addKeyword() {
         keywordInput.focus();
         }, 100);
 
-        loadAccountKeywords(); // 重新加载关键词列表
-        clearKeywordCache(); // 清除缓存
+        // 只刷新关键词列表，不重新加载整个界面
+        await refreshKeywordsList();
     } else {
-        const errorText = await response.text();
-        console.error('关键词添加失败:', errorText);
-        showToast('关键词添加失败', 'danger');
+        try {
+            const errorData = await response.json();
+            const errorMessage = errorData.detail || '关键词添加失败';
+            console.error('关键词添加失败:', errorMessage);
+
+            // 检查是否是重复关键词的错误
+            if (errorMessage.includes('关键词已存在') || errorMessage.includes('关键词重复') || errorMessage.includes('UNIQUE constraint')) {
+                showToast(`❌ 关键词重复：${errorMessage}`, 'warning');
+            } else {
+                showToast(`❌ ${errorMessage}`, 'danger');
+            }
+        } catch (parseError) {
+            // 如果无法解析JSON，使用原始文本
+            const errorText = await response.text();
+            console.error('关键词添加失败:', errorText);
+            showToast('❌ 关键词添加失败', 'danger');
+        }
     }
     } catch (error) {
     console.error('添加关键词失败:', error);
@@ -893,9 +953,8 @@ async function deleteKeyword(cookieId, index) {
 
     if (response.ok) {
         showToast('关键词删除成功', 'success');
-        // 重新加载关键词列表
-        loadAccountKeywords();
-        clearKeywordCache(); // 清除缓存
+        // 只刷新关键词列表，不重新加载整个界面
+        await refreshKeywordsList();
     } else {
         const errorText = await response.text();
         console.error('关键词删除失败:', errorText);
@@ -6134,16 +6193,17 @@ async function addImageKeyword() {
             const modal = bootstrap.Modal.getInstance(document.getElementById('addImageKeywordModal'));
             modal.hide();
 
-            // 重新加载关键词列表
-            loadAccountKeywords();
-            clearKeywordCache();
+            // 只刷新关键词列表，不重新加载整个界面
+            await refreshKeywordsList();
         } else {
             try {
                 const errorData = await response.json();
                 let errorMessage = errorData.detail || '图片关键词添加失败';
 
                 // 根据不同的错误类型提供更友好的提示
-                if (errorMessage.includes('图片尺寸过大')) {
+                if (errorMessage.includes('关键词') && (errorMessage.includes('已存在') || errorMessage.includes('重复'))) {
+                    errorMessage = `❌ 关键词重复：${errorMessage}`;
+                } else if (errorMessage.includes('图片尺寸过大')) {
                     errorMessage = '❌ 图片尺寸过大，请选择尺寸较小的图片（建议不超过4096x4096像素）';
                 } else if (errorMessage.includes('图片像素总数过大')) {
                     errorMessage = '❌ 图片像素总数过大，请选择分辨率较低的图片';

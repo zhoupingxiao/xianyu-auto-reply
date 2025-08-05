@@ -1631,10 +1631,22 @@ def update_keywords_with_item_id(cid: str, body: KeywordWithItemIdIn, current_us
 
         keywords_to_save.append((keyword, reply, item_id))
 
-    # 保存关键词
-    success = db_manager.save_keywords_with_item_id(cid, keywords_to_save)
-    if not success:
-        raise HTTPException(status_code=500, detail="保存关键词失败")
+    # 保存关键词（只保存文本关键词，保留图片关键词）
+    try:
+        success = db_manager.save_text_keywords_only(cid, keywords_to_save)
+        if not success:
+            raise HTTPException(status_code=500, detail="保存关键词失败")
+    except Exception as e:
+        error_msg = str(e)
+        if "UNIQUE constraint failed" in error_msg:
+            # 解析具体的冲突信息
+            if "keywords.cookie_id, keywords.keyword" in error_msg:
+                raise HTTPException(status_code=400, detail="关键词重复！该关键词已存在（可能是图片关键词或文本关键词），请使用其他关键词")
+            else:
+                raise HTTPException(status_code=400, detail="关键词重复！请使用不同的关键词或商品ID组合")
+        else:
+            log_with_user('error', f"保存关键词时发生未知错误: {error_msg}", current_user)
+            raise HTTPException(status_code=500, detail="保存关键词失败")
 
     log_with_user('info', f"更新Cookie关键字(含商品ID): {cid}, 数量: {len(keywords_to_save)}", current_user)
     return {"msg": "updated", "count": len(keywords_to_save)}

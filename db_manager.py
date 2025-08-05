@@ -1183,14 +1183,18 @@ class DBManager:
                             "INSERT INTO keywords (cookie_id, keyword, reply, item_id, type) VALUES (?, ?, ?, ?, 'text')",
                             (cookie_id, keyword, reply, normalized_item_id))
                     except sqlite3.IntegrityError as ie:
-                        # 如果遇到唯一约束冲突，记录详细错误信息
+                        # 如果遇到唯一约束冲突，记录详细错误信息并回滚
                         item_desc = f"商品ID: {normalized_item_id}" if normalized_item_id else "通用关键词"
                         logger.error(f"关键词唯一约束冲突: Cookie={cookie_id}, 关键词='{keyword}', {item_desc}")
+                        self.conn.rollback()
                         raise ie
 
                 self.conn.commit()
                 logger.info(f"文本关键字保存成功: {cookie_id}, {len(keywords)}条，图片关键词已保留")
                 return True
+            except sqlite3.IntegrityError:
+                # 唯一约束冲突，重新抛出异常让上层处理
+                raise
             except Exception as e:
                 logger.error(f"文本关键字保存失败: {e}")
                 self.conn.rollback()
