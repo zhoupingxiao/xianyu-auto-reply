@@ -962,7 +962,8 @@ def get_cookies_details(current_user: Dict[str, Any] = Depends(get_current_user)
             'value': cookie_value,
             'enabled': cookie_enabled,
             'auto_confirm': auto_confirm,
-            'remark': remark
+            'remark': remark,
+            'pause_duration': cookie_details.get('pause_duration', 10) if cookie_details else 10
         })
     return result
 
@@ -1557,6 +1558,10 @@ class RemarkUpdate(BaseModel):
     remark: str
 
 
+class PauseDurationUpdate(BaseModel):
+    pause_duration: int
+
+
 @app.put("/cookies/{cid}/auto-confirm")
 def update_auto_confirm(cid: str, update_data: AutoConfirmUpdate, current_user: Dict[str, Any] = Depends(get_current_user)):
     """更新账号的自动确认发货设置"""
@@ -1675,6 +1680,65 @@ def get_cookie_remark(cid: str, current_user: Dict[str, Any] = Depends(get_curre
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.put("/cookies/{cid}/pause-duration")
+def update_cookie_pause_duration(cid: str, update_data: PauseDurationUpdate, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """更新账号自动回复暂停时间"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        from db_manager import db_manager
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        if cid not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+        # 验证暂停时间范围（1-60分钟）
+        if not (1 <= update_data.pause_duration <= 60):
+            raise HTTPException(status_code=400, detail="暂停时间必须在1-60分钟之间")
+
+        # 更新暂停时间
+        success = db_manager.update_cookie_pause_duration(cid, update_data.pause_duration)
+        if success:
+            log_with_user('info', f"更新账号自动回复暂停时间: {cid} -> {update_data.pause_duration}分钟", current_user)
+            return {
+                "message": "暂停时间更新成功",
+                "pause_duration": update_data.pause_duration
+            }
+        else:
+            raise HTTPException(status_code=500, detail="暂停时间更新失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/cookies/{cid}/pause-duration")
+def get_cookie_pause_duration(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取账号自动回复暂停时间"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        from db_manager import db_manager
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        if cid not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+        # 获取暂停时间
+        pause_duration = db_manager.get_cookie_pause_duration(cid)
+        return {
+            "pause_duration": pause_duration,
+            "message": "获取暂停时间成功"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 

@@ -114,6 +114,7 @@ class DBManager:
                 user_id INTEGER NOT NULL,
                 auto_confirm INTEGER DEFAULT 1,
                 remark TEXT DEFAULT '',
+                pause_duration INTEGER DEFAULT 10,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
@@ -382,6 +383,12 @@ class DBManager:
                 logger.info("添加cookies表的remark列...")
                 cursor.execute("ALTER TABLE cookies ADD COLUMN remark TEXT DEFAULT ''")
                 logger.info("数据库迁移完成：添加remark列")
+
+            # 检查cookies表是否存在pause_duration列
+            if 'pause_duration' not in cookie_columns:
+                logger.info("添加cookies表的pause_duration列...")
+                cursor.execute("ALTER TABLE cookies ADD COLUMN pause_duration INTEGER DEFAULT 10")
+                logger.info("数据库迁移完成：添加pause_duration列")
 
         except Exception as e:
             logger.error(f"数据库迁移失败: {e}")
@@ -1088,11 +1095,11 @@ class DBManager:
                 return None
 
     def get_cookie_details(self, cookie_id: str) -> Optional[Dict[str, any]]:
-        """获取Cookie的详细信息，包括user_id、auto_confirm和remark"""
+        """获取Cookie的详细信息，包括user_id、auto_confirm、remark和pause_duration"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                self._execute_sql(cursor, "SELECT id, value, user_id, auto_confirm, remark, created_at FROM cookies WHERE id = ?", (cookie_id,))
+                self._execute_sql(cursor, "SELECT id, value, user_id, auto_confirm, remark, pause_duration, created_at FROM cookies WHERE id = ?", (cookie_id,))
                 result = cursor.fetchone()
                 if result:
                     return {
@@ -1101,7 +1108,8 @@ class DBManager:
                         'user_id': result[2],
                         'auto_confirm': bool(result[3]),
                         'remark': result[4] or '',
-                        'created_at': result[5]
+                        'pause_duration': result[5] or 10,
+                        'created_at': result[6]
                     }
                 return None
             except Exception as e:
@@ -1133,6 +1141,33 @@ class DBManager:
             except Exception as e:
                 logger.error(f"更新账号备注失败: {e}")
                 return False
+
+    def update_cookie_pause_duration(self, cookie_id: str, pause_duration: int) -> bool:
+        """更新Cookie的自动回复暂停时间"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "UPDATE cookies SET pause_duration = ? WHERE id = ?", (pause_duration, cookie_id))
+                self.conn.commit()
+                logger.info(f"更新账号 {cookie_id} 自动回复暂停时间: {pause_duration}分钟")
+                return True
+            except Exception as e:
+                logger.error(f"更新账号自动回复暂停时间失败: {e}")
+                return False
+
+    def get_cookie_pause_duration(self, cookie_id: str) -> int:
+        """获取Cookie的自动回复暂停时间"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "SELECT pause_duration FROM cookies WHERE id = ?", (cookie_id,))
+                result = cursor.fetchone()
+                if result:
+                    return result[0] or 10  # 默认10分钟
+                return 10  # 如果没有找到记录，返回默认值
+            except Exception as e:
+                logger.error(f"获取账号自动回复暂停时间失败: {e}")
+                return 10  # 出错时返回默认值
 
     def get_auto_confirm(self, cookie_id: str) -> bool:
         """获取Cookie的自动确认发货设置"""

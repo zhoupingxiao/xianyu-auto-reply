@@ -21,6 +21,70 @@ from utils.ws_utils import WebSocketClient
 import sys
 import aiohttp
 
+
+class AutoReplyPauseManager:
+    """自动回复暂停管理器"""
+    def __init__(self):
+        # 存储每个chat_id的暂停信息 {chat_id: pause_until_timestamp}
+        self.paused_chats = {}
+
+    def pause_chat(self, chat_id: str, cookie_id: str):
+        """暂停指定chat_id的自动回复，使用账号特定的暂停时间"""
+        # 获取账号特定的暂停时间
+        try:
+            from db_manager import db_manager
+            pause_minutes = db_manager.get_cookie_pause_duration(cookie_id)
+        except Exception as e:
+            logger.error(f"获取账号 {cookie_id} 暂停时间失败: {e}，使用默认10分钟")
+            pause_minutes = 10
+
+        pause_duration_seconds = pause_minutes * 60
+        pause_until = time.time() + pause_duration_seconds
+        self.paused_chats[chat_id] = pause_until
+
+        # 计算暂停结束时间
+        end_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(pause_until))
+        logger.info(f"【{cookie_id}】检测到手动发出消息，chat_id {chat_id} 自动回复暂停{pause_minutes}分钟，恢复时间: {end_time}")
+
+    def is_chat_paused(self, chat_id: str) -> bool:
+        """检查指定chat_id是否处于暂停状态"""
+        if chat_id not in self.paused_chats:
+            return False
+
+        current_time = time.time()
+        pause_until = self.paused_chats[chat_id]
+
+        if current_time >= pause_until:
+            # 暂停时间已过，移除记录
+            del self.paused_chats[chat_id]
+            return False
+
+        return True
+
+    def get_remaining_pause_time(self, chat_id: str) -> int:
+        """获取指定chat_id剩余暂停时间（秒）"""
+        if chat_id not in self.paused_chats:
+            return 0
+
+        current_time = time.time()
+        pause_until = self.paused_chats[chat_id]
+        remaining = max(0, int(pause_until - current_time))
+
+        return remaining
+
+    def cleanup_expired_pauses(self):
+        """清理已过期的暂停记录"""
+        current_time = time.time()
+        expired_chats = [chat_id for chat_id, pause_until in self.paused_chats.items()
+                        if current_time >= pause_until]
+
+        for chat_id in expired_chats:
+            del self.paused_chats[chat_id]
+
+
+# 全局暂停管理器实例
+pause_manager = AutoReplyPauseManager()
+
 # 日志配置
 log_dir = 'logs'
 os.makedirs(log_dir, exist_ok=True)
@@ -106,9 +170,12 @@ class XianyuLive:
         # 自动确认发货防重复机制
         self.confirmed_orders = {}  # 记录已确认发货的订单，防止重复确认
         self.order_confirm_cooldown = 600  # 10分钟内不重复确认同一订单
-        
+
 
         self.session = None  # 用于API调用的aiohttp session
+
+        # 启动定期清理过期暂停记录的任务
+        self.cleanup_task = None
 
     def is_auto_confirm_enabled(self) -> bool:
         """检查当前账号是否启用自动确认发货"""
@@ -2301,6 +2368,25 @@ class XianyuLive:
             logger.error(f"处理心跳响应出错: {self._safe_str(e)}")
         return False
 
+    async def pause_cleanup_loop(self):
+        """定期清理过期的暂停记录"""
+        while True:
+            try:
+                # 检查账号是否启用
+                from cookie_manager import manager as cookie_manager
+                if cookie_manager and not cookie_manager.get_cookie_status(self.cookie_id):
+                    logger.info(f"【{self.cookie_id}】账号已禁用，停止暂停记录清理循环")
+                    break
+
+                # 清理过期的暂停记录
+                pause_manager.cleanup_expired_pauses()
+
+                # 每5分钟清理一次
+                await asyncio.sleep(300)
+            except Exception as e:
+                logger.error(f"【{self.cookie_id}】暂停记录清理失败: {self._safe_str(e)}")
+                await asyncio.sleep(300)  # 出错后也等待5分钟再重试
+
     async def send_msg_once(self, toid, item_id, text):
         headers = {
             "Cookie": self.cookies_str,
@@ -2672,6 +2758,8 @@ class XianyuLive:
             if send_user_id == self.myid:
                 logger.info(f"[{msg_time}] 【手动发出】 商品({item_id}): {send_message}")
 
+                # 暂停该chat_id的自动回复10分钟
+                pause_manager.pause_chat(chat_id, self.cookie_id)
 
                 return
             else:
@@ -2684,6 +2772,14 @@ class XianyuLive:
             # 自动回复消息
             if not AUTO_REPLY.get('enabled', True):
                 logger.info(f"[{msg_time}] 【{self.cookie_id}】【系统】自动回复已禁用")
+                return
+
+            # 检查该chat_id是否处于暂停状态
+            if pause_manager.is_chat_paused(chat_id):
+                remaining_time = pause_manager.get_remaining_pause_time(chat_id)
+                remaining_minutes = remaining_time // 60
+                remaining_seconds = remaining_time % 60
+                logger.info(f"[{msg_time}] 【{self.cookie_id}】【系统】chat_id {chat_id} 自动回复已暂停，剩余时间: {remaining_minutes}分{remaining_seconds}秒")
                 return
 
             # 构造用户URL
@@ -2878,6 +2974,11 @@ class XianyuLive:
                         logger.info(f"【{self.cookie_id}】启动token刷新任务...")
                         self.token_refresh_task = asyncio.create_task(self.token_refresh_loop())
 
+                        # 启动暂停记录清理任务
+                        if not self.cleanup_task:
+                            logger.info(f"【{self.cookie_id}】启动暂停记录清理任务...")
+                            self.cleanup_task = asyncio.create_task(self.pause_cleanup_loop())
+
                         logger.info(f"【{self.cookie_id}】开始监听WebSocket消息...")
 
                         async for message in websocket:
@@ -2901,9 +3002,18 @@ class XianyuLive:
                         self.heartbeat_task.cancel()
                     if self.token_refresh_task:
                         self.token_refresh_task.cancel()
+                    if self.cleanup_task:
+                        self.cleanup_task.cancel()
                     await asyncio.sleep(5)  # 等待5秒后重试
                     continue
         finally:
+            # 清理所有任务
+            if self.heartbeat_task:
+                self.heartbeat_task.cancel()
+            if self.token_refresh_task:
+                self.token_refresh_task.cancel()
+            if self.cleanup_task:
+                self.cleanup_task.cancel()
             await self.close_session()  # 确保关闭session
 
     async def get_item_list_info(self, page_number=1, page_size=20, retry_count=0):
