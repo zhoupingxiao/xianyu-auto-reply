@@ -1072,7 +1072,7 @@ async function loadCookies() {
     if (cookieDetails.length === 0) {
         tbody.innerHTML = `
         <tr>
-            <td colspan="7" class="text-center py-4 text-muted empty-state">
+            <td colspan="9" class="text-center py-4 text-muted empty-state">
             <i class="bi bi-inbox fs-1 d-block mb-3"></i>
             <h5>暂无账号</h5>
             <p class="mb-0">请添加新的闲鱼账号开始使用</p>
@@ -1197,6 +1197,13 @@ async function loadCookies() {
             <span class="status-badge ${autoConfirm ? 'enabled' : 'disabled'}" title="${autoConfirm ? '自动确认发货已开启' : '自动确认发货已关闭'}">
                 <i class="bi bi-${autoConfirm ? 'truck' : 'truck-flatbed'}"></i>
             </span>
+            </div>
+        </td>
+        <td class="align-middle">
+            <div class="remark-cell" data-cookie-id="${cookie.id}">
+                <span class="remark-display" onclick="editRemark('${cookie.id}', '${(cookie.remark || '').replace(/'/g, '&#39;')}')" title="点击编辑备注" style="cursor: pointer; color: #6c757d; font-size: 0.875rem;">
+                    ${cookie.remark || '<i class="bi bi-plus-circle text-muted"></i> 添加备注'}
+                </span>
             </div>
         </td>
         <td class="align-middle">
@@ -6350,4 +6357,119 @@ async function exportKeywords() {
     } finally {
         toggleLoading(false);
     }
+}
+
+// ==================== 备注管理功能 ====================
+
+// 编辑备注
+function editRemark(cookieId, currentRemark) {
+    console.log('editRemark called:', cookieId, currentRemark); // 调试信息
+    const remarkCell = document.querySelector(`[data-cookie-id="${cookieId}"] .remark-display`);
+    if (!remarkCell) {
+        console.log('remarkCell not found'); // 调试信息
+        return;
+    }
+
+    // 创建输入框
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'form-control form-control-sm';
+    input.value = currentRemark || '';
+    input.placeholder = '请输入备注...';
+    input.style.fontSize = '0.875rem';
+    input.maxLength = 100; // 限制备注长度
+
+    // 保存原始内容和原始值
+    const originalContent = remarkCell.innerHTML;
+    const originalValue = currentRemark || '';
+
+    // 标记是否已经进行了编辑
+    let hasChanged = false;
+    let isProcessing = false; // 防止重复处理
+
+    // 替换为输入框
+    remarkCell.innerHTML = '';
+    remarkCell.appendChild(input);
+
+    // 监听输入变化
+    input.addEventListener('input', () => {
+        hasChanged = input.value.trim() !== originalValue;
+    });
+
+    // 保存函数
+    const saveRemark = async () => {
+        console.log('saveRemark called, isProcessing:', isProcessing, 'hasChanged:', hasChanged); // 调试信息
+        if (isProcessing) return; // 防止重复调用
+
+        const newRemark = input.value.trim();
+        console.log('newRemark:', newRemark, 'originalValue:', originalValue); // 调试信息
+
+        // 如果没有变化，直接恢复显示
+        if (!hasChanged || newRemark === originalValue) {
+            console.log('No changes detected, restoring original content'); // 调试信息
+            remarkCell.innerHTML = originalContent;
+            return;
+        }
+
+        isProcessing = true;
+
+        try {
+            const response = await fetch(`${apiBase}/cookies/${cookieId}/remark`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ remark: newRemark })
+            });
+
+            if (response.ok) {
+                // 更新显示
+                remarkCell.innerHTML = `
+                    <span class="remark-display" onclick="editRemark('${cookieId}', '${newRemark.replace(/'/g, '&#39;')}')" title="点击编辑备注" style="cursor: pointer; color: #6c757d; font-size: 0.875rem;">
+                        ${newRemark || '<i class="bi bi-plus-circle text-muted"></i> 添加备注'}
+                    </span>
+                `;
+                showToast('备注更新成功', 'success');
+            } else {
+                const errorData = await response.json();
+                showToast(`备注更新失败: ${errorData.detail || '未知错误'}`, 'danger');
+                // 恢复原始内容
+                remarkCell.innerHTML = originalContent;
+            }
+        } catch (error) {
+            console.error('更新备注失败:', error);
+            showToast('备注更新失败', 'danger');
+            // 恢复原始内容
+            remarkCell.innerHTML = originalContent;
+        } finally {
+            isProcessing = false;
+        }
+    };
+
+    // 取消函数
+    const cancelEdit = () => {
+        if (isProcessing) return;
+        remarkCell.innerHTML = originalContent;
+    };
+
+    // 延迟绑定blur事件，避免立即触发
+    setTimeout(() => {
+        input.addEventListener('blur', saveRemark);
+    }, 100);
+
+    // 绑定键盘事件
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveRemark();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelEdit();
+        }
+    });
+
+    // 聚焦并选中文本
+    input.focus();
+    input.select();
 }

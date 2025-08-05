@@ -908,11 +908,16 @@ def get_cookies_details(current_user: Dict[str, Any] = Depends(get_current_user)
     for cookie_id, cookie_value in user_cookies.items():
         cookie_enabled = cookie_manager.manager.get_cookie_status(cookie_id)
         auto_confirm = db_manager.get_auto_confirm(cookie_id)
+        # 获取备注信息
+        cookie_details = db_manager.get_cookie_details(cookie_id)
+        remark = cookie_details.get('remark', '') if cookie_details else ''
+
         result.append({
             'id': cookie_id,
             'value': cookie_value,
             'enabled': cookie_enabled,
-            'auto_confirm': auto_confirm
+            'auto_confirm': auto_confirm,
+            'remark': remark
         })
     return result
 
@@ -1443,6 +1448,10 @@ class AutoConfirmUpdate(BaseModel):
     auto_confirm: bool
 
 
+class RemarkUpdate(BaseModel):
+    remark: str
+
+
 @app.put("/cookies/{cid}/auto-confirm")
 def update_auto_confirm(cid: str, update_data: AutoConfirmUpdate, current_user: Dict[str, Any] = Depends(get_current_user)):
     """更新账号的自动确认发货设置"""
@@ -1497,6 +1506,65 @@ def get_auto_confirm(cid: str, current_user: Dict[str, Any] = Depends(get_curren
             "auto_confirm": auto_confirm,
             "message": f"自动确认发货当前{'开启' if auto_confirm else '关闭'}"
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/cookies/{cid}/remark")
+def update_cookie_remark(cid: str, update_data: RemarkUpdate, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """更新账号备注"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        from db_manager import db_manager
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        if cid not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+        # 更新备注
+        success = db_manager.update_cookie_remark(cid, update_data.remark)
+        if success:
+            log_with_user('info', f"更新账号备注: {cid} -> {update_data.remark}", current_user)
+            return {
+                "message": "备注更新成功",
+                "remark": update_data.remark
+            }
+        else:
+            raise HTTPException(status_code=500, detail="备注更新失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/cookies/{cid}/remark")
+def get_cookie_remark(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取账号备注"""
+    if cookie_manager.manager is None:
+        raise HTTPException(status_code=500, detail="CookieManager 未就绪")
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        from db_manager import db_manager
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        if cid not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+        # 获取Cookie详细信息（包含备注）
+        cookie_details = db_manager.get_cookie_details(cid)
+        if cookie_details:
+            return {
+                "remark": cookie_details.get('remark', ''),
+                "message": "获取备注成功"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="账号不存在")
     except HTTPException:
         raise
     except Exception as e:
