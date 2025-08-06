@@ -3658,9 +3658,10 @@ def get_table_data(table_name: str, admin_user: Dict[str, Any] = Depends(require
 
         # 验证表名安全性
         allowed_tables = [
-            'users', 'cookies', 'keywords', 'default_replies', 'ai_reply_settings',
+            'users', 'cookies', 'cookie_status', 'keywords', 'default_replies', 'default_reply_records',
+            'ai_reply_settings', 'ai_conversations', 'ai_item_cache', 'item_info',
             'message_notifications', 'cards', 'delivery_rules', 'notification_channels',
-            'user_settings', 'email_verifications', 'captcha_codes'
+            'user_settings', 'system_settings', 'email_verifications', 'captcha_codes'
         ]
 
         if table_name not in allowed_tables:
@@ -3694,9 +3695,10 @@ def delete_table_record(table_name: str, record_id: str, admin_user: Dict[str, A
 
         # 验证表名安全性
         allowed_tables = [
-            'users', 'cookies', 'keywords', 'default_replies', 'ai_reply_settings',
+            'users', 'cookies', 'cookie_status', 'keywords', 'default_replies', 'default_reply_records',
+            'ai_reply_settings', 'ai_conversations', 'ai_item_cache', 'item_info',
             'message_notifications', 'cards', 'delivery_rules', 'notification_channels',
-            'user_settings', 'email_verifications', 'captcha_codes'
+            'user_settings', 'system_settings', 'email_verifications', 'captcha_codes'
         ]
 
         if table_name not in allowed_tables:
@@ -3733,9 +3735,10 @@ def clear_table_data(table_name: str, admin_user: Dict[str, Any] = Depends(requi
 
         # 验证表名安全性
         allowed_tables = [
-            'cookies', 'keywords', 'default_replies', 'ai_reply_settings',
+            'cookies', 'cookie_status', 'keywords', 'default_replies', 'default_reply_records',
+            'ai_reply_settings', 'ai_conversations', 'ai_item_cache', 'item_info',
             'message_notifications', 'cards', 'delivery_rules', 'notification_channels',
-            'user_settings', 'email_verifications', 'captcha_codes'
+            'user_settings', 'system_settings', 'email_verifications', 'captcha_codes'
         ]
 
         # 不允许清空用户表

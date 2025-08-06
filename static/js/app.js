@@ -17,6 +17,14 @@ let accountKeywordCache = {};
 let cacheTimestamp = 0;
 const CACHE_DURATION = 30000; // 30秒缓存
 
+// 商品列表搜索和分页相关变量
+let allItemsData = []; // 存储所有商品数据
+let filteredItemsData = []; // 存储过滤后的商品数据
+let currentItemsPage = 1; // 当前页码
+let itemsPerPage = 20; // 每页显示数量
+let totalItemsPages = 0; // 总页数
+let currentSearchKeyword = ''; // 当前搜索关键词
+
 // ================================
 // 通用功能 - 菜单切换和导航
 // ================================
@@ -1792,6 +1800,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 初始化工具提示
     initTooltips();
+
+    // 初始化商品搜索功能
+    initItemsSearch();
 
     // 点击侧边栏外部关闭移动端菜单
     document.addEventListener('click', function(e) {
@@ -4977,92 +4988,289 @@ async function loadItemsByCookie() {
 
 // 显示商品列表
 function displayItems(items) {
+    // 存储所有商品数据
+    allItemsData = items || [];
+
+    // 应用搜索过滤
+    applyItemsFilter();
+
+    // 显示当前页数据
+    displayCurrentPageItems();
+
+    // 更新分页控件
+    updateItemsPagination();
+}
+
+// 应用搜索过滤
+function applyItemsFilter() {
+    const searchKeyword = currentSearchKeyword.toLowerCase().trim();
+
+    if (!searchKeyword) {
+        filteredItemsData = [...allItemsData];
+    } else {
+        filteredItemsData = allItemsData.filter(item => {
+            const title = (item.item_title || '').toLowerCase();
+            const detail = getItemDetailText(item.item_detail || '').toLowerCase();
+            return title.includes(searchKeyword) || detail.includes(searchKeyword);
+        });
+    }
+
+    // 重置到第一页
+    currentItemsPage = 1;
+
+    // 计算总页数
+    totalItemsPages = Math.ceil(filteredItemsData.length / itemsPerPage);
+
+    // 更新搜索统计
+    updateItemsSearchStats();
+}
+
+// 获取商品详情的纯文本内容
+function getItemDetailText(itemDetail) {
+    if (!itemDetail) return '';
+
+    try {
+        // 尝试解析JSON
+        const detail = JSON.parse(itemDetail);
+        if (detail.content) {
+            return detail.content;
+        }
+        return itemDetail;
+    } catch (e) {
+        // 如果不是JSON格式，直接返回原文本
+        return itemDetail;
+    }
+}
+
+// 显示当前页的商品数据
+function displayCurrentPageItems() {
     const tbody = document.getElementById('itemsTableBody');
 
-    if (!items || items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无商品数据</td></tr>';
-    // 重置选择状态
-    const selectAllCheckbox = document.getElementById('selectAllItems');
-    if (selectAllCheckbox) {
-        selectAllCheckbox.checked = false;
-        selectAllCheckbox.indeterminate = false;
-    }
-    updateBatchDeleteButton();
-    return;
+    if (!filteredItemsData || filteredItemsData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无商品数据</td></tr>';
+        resetItemsSelection();
+        return;
     }
 
-    const itemsHtml = items.map(item => {
-    // 处理商品标题显示
-    let itemTitleDisplay = item.item_title || '未设置';
-    if (itemTitleDisplay.length > 30) {
-        itemTitleDisplay = itemTitleDisplay.substring(0, 30) + '...';
-    }
+    // 计算当前页的数据范围
+    const startIndex = (currentItemsPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const currentPageItems = filteredItemsData.slice(startIndex, endIndex);
 
-    // 处理商品详情显示
-    let itemDetailDisplay = '未设置';
-    if (item.item_detail) {
-        try {
-        // 尝试解析JSON并提取有用信息
-        const detail = JSON.parse(item.item_detail);
-        if (detail.content) {
-            itemDetailDisplay = detail.content.substring(0, 50) + (detail.content.length > 50 ? '...' : '');
-        } else {
-            // 如果是纯文本或其他格式，直接显示前50个字符
-            itemDetailDisplay = item.item_detail.substring(0, 50) + (item.item_detail.length > 50 ? '...' : '');
+    const itemsHtml = currentPageItems.map(item => {
+        // 处理商品标题显示
+        let itemTitleDisplay = item.item_title || '未设置';
+        if (itemTitleDisplay.length > 30) {
+            itemTitleDisplay = itemTitleDisplay.substring(0, 30) + '...';
         }
-        } catch (e) {
-        // 如果不是JSON格式，直接显示前50个字符
-        itemDetailDisplay = item.item_detail.substring(0, 50) + (item.item_detail.length > 50 ? '...' : '');
+
+        // 处理商品详情显示
+        let itemDetailDisplay = '未设置';
+        if (item.item_detail) {
+            const detailText = getItemDetailText(item.item_detail);
+            itemDetailDisplay = detailText.substring(0, 50) + (detailText.length > 50 ? '...' : '');
         }
-    }
 
-    // 多规格状态显示
-    const isMultiSpec = item.is_multi_spec;
-    const multiSpecDisplay = isMultiSpec ?
-        '<span class="badge bg-success">多规格</span>' :
-        '<span class="badge bg-secondary">普通</span>';
+        // 多规格状态显示
+        const isMultiSpec = item.is_multi_spec;
+        const multiSpecDisplay = isMultiSpec ?
+            '<span class="badge bg-success">多规格</span>' :
+            '<span class="badge bg-secondary">普通</span>';
 
-    return `
-        <tr>
-        <td>
-            <input type="checkbox" name="itemCheckbox"
-                    data-cookie-id="${escapeHtml(item.cookie_id)}"
-                    data-item-id="${escapeHtml(item.item_id)}"
-                    onchange="updateSelectAllState()">
-        </td>
-        <td>${escapeHtml(item.cookie_id)}</td>
-        <td>${escapeHtml(item.item_id)}</td>
-        <td title="${escapeHtml(item.item_title || '未设置')}">${escapeHtml(itemTitleDisplay)}</td>
-        <td title="${escapeHtml(item.item_detail || '未设置')}">${escapeHtml(itemDetailDisplay)}</td>
-        <td>${multiSpecDisplay}</td>
-        <td>${formatDateTime(item.updated_at)}</td>
-        <td>
-            <div class="btn-group" role="group">
-            <button class="btn btn-sm btn-outline-primary" onclick="editItem('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}')" title="编辑详情">
-                <i class="bi bi-pencil"></i>
-            </button>
-            <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', '${escapeHtml(item.item_title || item.item_id)}')" title="删除">
-                <i class="bi bi-trash"></i>
-            </button>
-            <button class="btn btn-sm ${isMultiSpec ? 'btn-warning' : 'btn-success'}" onclick="toggleItemMultiSpec('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', ${!isMultiSpec})" title="${isMultiSpec ? '关闭多规格' : '开启多规格'}">
-                <i class="bi ${isMultiSpec ? 'bi-toggle-on' : 'bi-toggle-off'}"></i>
-            </button>
-            </div>
-        </td>
-        </tr>
-    `;
+        return `
+            <tr>
+            <td>
+                <input type="checkbox" name="itemCheckbox"
+                        data-cookie-id="${escapeHtml(item.cookie_id)}"
+                        data-item-id="${escapeHtml(item.item_id)}"
+                        onchange="updateSelectAllState()">
+            </td>
+            <td>${escapeHtml(item.cookie_id)}</td>
+            <td>${escapeHtml(item.item_id)}</td>
+            <td title="${escapeHtml(item.item_title || '未设置')}">${escapeHtml(itemTitleDisplay)}</td>
+            <td title="${escapeHtml(getItemDetailText(item.item_detail || ''))}">${escapeHtml(itemDetailDisplay)}</td>
+            <td>${multiSpecDisplay}</td>
+            <td>${formatDateTime(item.updated_at)}</td>
+            <td>
+                <div class="btn-group" role="group">
+                <button class="btn btn-sm btn-outline-primary" onclick="editItem('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}')" title="编辑详情">
+                    <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', '${escapeHtml(item.item_title || item.item_id)}')" title="删除">
+                    <i class="bi bi-trash"></i>
+                </button>
+                <button class="btn btn-sm ${isMultiSpec ? 'btn-warning' : 'btn-success'}" onclick="toggleItemMultiSpec('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', ${!isMultiSpec})" title="${isMultiSpec ? '关闭多规格' : '开启多规格'}">
+                    <i class="bi ${isMultiSpec ? 'bi-toggle-on' : 'bi-toggle-off'}"></i>
+                </button>
+                </div>
+            </td>
+            </tr>
+        `;
     }).join('');
 
     // 更新表格内容
     tbody.innerHTML = itemsHtml;
 
     // 重置选择状态
+    resetItemsSelection();
+}
+
+// 重置商品选择状态
+function resetItemsSelection() {
     const selectAllCheckbox = document.getElementById('selectAllItems');
     if (selectAllCheckbox) {
-    selectAllCheckbox.checked = false;
-    selectAllCheckbox.indeterminate = false;
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
     }
     updateBatchDeleteButton();
+}
+
+// 商品搜索过滤函数
+function filterItems() {
+    const searchInput = document.getElementById('itemSearchInput');
+    currentSearchKeyword = searchInput ? searchInput.value : '';
+
+    // 应用过滤
+    applyItemsFilter();
+
+    // 显示当前页数据
+    displayCurrentPageItems();
+
+    // 更新分页控件
+    updateItemsPagination();
+}
+
+// 更新搜索统计信息
+function updateItemsSearchStats() {
+    const statsElement = document.getElementById('itemSearchStats');
+    const statsTextElement = document.getElementById('itemSearchStatsText');
+
+    if (!statsElement || !statsTextElement) return;
+
+    if (currentSearchKeyword) {
+        statsTextElement.textContent = `搜索"${currentSearchKeyword}"，找到 ${filteredItemsData.length} 个商品`;
+        statsElement.style.display = 'block';
+    } else {
+        statsElement.style.display = 'none';
+    }
+}
+
+// 更新分页控件
+function updateItemsPagination() {
+    const paginationElement = document.getElementById('itemsPagination');
+    const pageInfoElement = document.getElementById('itemsPageInfo');
+    const totalPagesElement = document.getElementById('itemsTotalPages');
+    const pageInputElement = document.getElementById('itemsPageInput');
+
+    if (!paginationElement) return;
+
+    // 分页控件总是显示
+    paginationElement.style.display = 'block';
+
+    // 更新页面信息
+    const startIndex = (currentItemsPage - 1) * itemsPerPage + 1;
+    const endIndex = Math.min(currentItemsPage * itemsPerPage, filteredItemsData.length);
+
+    if (pageInfoElement) {
+        pageInfoElement.textContent = `显示第 ${startIndex}-${endIndex} 条，共 ${filteredItemsData.length} 条记录`;
+    }
+
+    if (totalPagesElement) {
+        totalPagesElement.textContent = totalItemsPages;
+    }
+
+    if (pageInputElement) {
+        pageInputElement.value = currentItemsPage;
+        pageInputElement.max = totalItemsPages;
+    }
+
+    // 更新分页按钮状态
+    updateItemsPaginationButtons();
+}
+
+// 更新分页按钮状态
+function updateItemsPaginationButtons() {
+    const firstPageBtn = document.getElementById('itemsFirstPage');
+    const prevPageBtn = document.getElementById('itemsPrevPage');
+    const nextPageBtn = document.getElementById('itemsNextPage');
+    const lastPageBtn = document.getElementById('itemsLastPage');
+
+    if (firstPageBtn) firstPageBtn.disabled = currentItemsPage <= 1;
+    if (prevPageBtn) prevPageBtn.disabled = currentItemsPage <= 1;
+    if (nextPageBtn) nextPageBtn.disabled = currentItemsPage >= totalItemsPages;
+    if (lastPageBtn) lastPageBtn.disabled = currentItemsPage >= totalItemsPages;
+}
+
+// 跳转到指定页面
+function goToItemsPage(page) {
+    if (page < 1 || page > totalItemsPages) return;
+
+    currentItemsPage = page;
+    displayCurrentPageItems();
+    updateItemsPagination();
+}
+
+// 处理页面输入框的回车事件
+function handleItemsPageInput(event) {
+    if (event.key === 'Enter') {
+        const pageInput = event.target;
+        const page = parseInt(pageInput.value);
+
+        if (page >= 1 && page <= totalItemsPages) {
+            goToItemsPage(page);
+        } else {
+            pageInput.value = currentItemsPage;
+        }
+    }
+}
+
+// 改变每页显示数量
+function changeItemsPageSize() {
+    const pageSizeSelect = document.getElementById('itemsPageSize');
+    if (!pageSizeSelect) return;
+
+    itemsPerPage = parseInt(pageSizeSelect.value);
+
+    // 重新计算总页数
+    totalItemsPages = Math.ceil(filteredItemsData.length / itemsPerPage);
+
+    // 调整当前页码，确保不超出范围
+    if (currentItemsPage > totalItemsPages) {
+        currentItemsPage = Math.max(1, totalItemsPages);
+    }
+
+    // 重新显示数据
+    displayCurrentPageItems();
+    updateItemsPagination();
+}
+
+// 初始化商品搜索功能
+function initItemsSearch() {
+    // 初始化分页大小
+    const pageSizeSelect = document.getElementById('itemsPageSize');
+    if (pageSizeSelect) {
+        itemsPerPage = parseInt(pageSizeSelect.value) || 20;
+        pageSizeSelect.addEventListener('change', changeItemsPageSize);
+    }
+
+    // 初始化搜索输入框事件监听器
+    const searchInput = document.getElementById('itemSearchInput');
+    if (searchInput) {
+        // 使用防抖来避免频繁搜索
+        let searchTimeout;
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                filterItems();
+            }, 300); // 300ms 防抖延迟
+        });
+    }
+
+    // 初始化页面输入框事件监听器
+    const pageInput = document.getElementById('itemsPageInput');
+    if (pageInput) {
+        pageInput.addEventListener('keydown', handleItemsPageInput);
+    }
 }
 
 // 刷新商品列表
