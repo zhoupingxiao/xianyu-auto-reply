@@ -1,4 +1,4 @@
-# 🐟 闲鱼自动回复系统
+# 🐟 闲鱼自动回复系统  （另外提供cursor pro 14天试用账号，物美价廉，欢迎联系）
 
 [![GitHub](https://img.shields.io/badge/GitHub-zhinianboke%2Fxianyu--auto--reply-blue?logo=github)](https://github.com/zhinianboke/xianyu-auto-reply)
 [![Docker](https://img.shields.io/badge/Docker-一键部署-blue?logo=docker)](https://github.com/zhinianboke/xianyu-auto-reply#-快速开始)
