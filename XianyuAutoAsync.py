@@ -961,8 +961,8 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"调试消息结构时发生错误: {self._safe_str(e)}")
 
-    async def get_default_reply(self, send_user_name: str, send_user_id: str, send_message: str) -> str:
-        """获取默认回复内容，支持变量替换"""
+    async def get_default_reply(self, send_user_name: str, send_user_id: str, send_message: str, chat_id: str = None) -> str:
+        """获取默认回复内容，支持变量替换和只回复一次功能"""
         try:
             from db_manager import db_manager
 
@@ -972,6 +972,13 @@ class XianyuLive:
             if not default_reply_settings or not default_reply_settings.get('enabled', False):
                 logger.debug(f"账号 {self.cookie_id} 未启用默认回复")
                 return None
+
+            # 检查"只回复一次"功能
+            if default_reply_settings.get('reply_once', False) and chat_id:
+                # 检查是否已经回复过这个chat_id
+                if db_manager.has_default_reply_record(self.cookie_id, chat_id):
+                    logger.info(f"【{self.cookie_id}】chat_id {chat_id} 已使用过默认回复，跳过（只回复一次）")
+                    return None
 
             reply_content = default_reply_settings.get('reply_content', '')
             if not reply_content:
@@ -985,6 +992,12 @@ class XianyuLive:
                     send_user_id=send_user_id,
                     send_message=send_message
                 )
+
+                # 如果开启了"只回复一次"功能，记录这次回复
+                if default_reply_settings.get('reply_once', False) and chat_id:
+                    db_manager.add_default_reply_record(self.cookie_id, chat_id)
+                    logger.info(f"【{self.cookie_id}】记录默认回复: chat_id={chat_id}")
+
                 logger.info(f"【{self.cookie_id}】使用默认回复: {formatted_reply}")
                 return formatted_reply
             except Exception as format_error:
@@ -2896,7 +2909,7 @@ class XianyuLive:
                         reply_source = 'AI'  # 标记为AI回复
                     else:
                         # 3. 最后使用默认回复
-                        reply = await self.get_default_reply(send_user_name, send_user_id, send_message)
+                        reply = await self.get_default_reply(send_user_name, send_user_id, send_message, chat_id)
                         reply_source = '默认'  # 标记为默认回复
 
             # 注意：这里只有商品ID，没有标题和详情，根据新的规则不保存到数据库

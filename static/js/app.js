@@ -1864,7 +1864,7 @@ function renderDefaultRepliesList(accounts, defaultReplies) {
     if (accounts.length === 0) {
     tbody.innerHTML = `
         <tr>
-        <td colspan="4" class="text-center py-4 text-muted">
+        <td colspan="5" class="text-center py-4 text-muted">
             <i class="bi bi-chat-text fs-1 d-block mb-3"></i>
             <h5>暂无账号数据</h5>
             <p class="mb-0">请先添加账号</p>
@@ -1875,13 +1875,18 @@ function renderDefaultRepliesList(accounts, defaultReplies) {
     }
 
     accounts.forEach(accountId => {
-    const replySettings = defaultReplies[accountId] || { enabled: false, reply_content: '' };
+    const replySettings = defaultReplies[accountId] || { enabled: false, reply_content: '', reply_once: false };
     const tr = document.createElement('tr');
 
     // 状态标签
     const statusBadge = replySettings.enabled ?
         '<span class="badge bg-success">启用</span>' :
         '<span class="badge bg-secondary">禁用</span>';
+
+    // 只回复一次标签
+    const replyOnceBadge = replySettings.reply_once ?
+        '<span class="badge bg-warning">是</span>' :
+        '<span class="badge bg-light text-dark">否</span>';
 
     // 回复内容预览
     let contentPreview = replySettings.reply_content || '未设置';
@@ -1894,6 +1899,7 @@ function renderDefaultRepliesList(accounts, defaultReplies) {
         <strong class="text-primary">${accountId}</strong>
         </td>
         <td>${statusBadge}</td>
+        <td>${replyOnceBadge}</td>
         <td>
         <div class="text-truncate" style="max-width: 300px;" title="${replySettings.reply_content || ''}">
             ${contentPreview}
@@ -1907,6 +1913,11 @@ function renderDefaultRepliesList(accounts, defaultReplies) {
             <button class="btn btn-sm btn-outline-info" onclick="testDefaultReply('${accountId}')" title="测试">
             <i class="bi bi-play"></i>
             </button>
+            ${replySettings.reply_once ? `
+            <button class="btn btn-sm btn-outline-warning" onclick="clearDefaultReplyRecords('${accountId}')" title="清空记录">
+            <i class="bi bi-arrow-clockwise"></i>
+            </button>
+            ` : ''}
         </div>
         </td>
     `;
@@ -1925,7 +1936,7 @@ async function editDefaultReply(accountId) {
         }
     });
 
-    let settings = { enabled: false, reply_content: '' };
+    let settings = { enabled: false, reply_content: '', reply_once: false };
     if (response.ok) {
         settings = await response.json();
     }
@@ -1935,6 +1946,7 @@ async function editDefaultReply(accountId) {
     document.getElementById('editAccountIdDisplay').value = accountId;
     document.getElementById('editDefaultReplyEnabled').checked = settings.enabled;
     document.getElementById('editReplyContent').value = settings.reply_content || '';
+    document.getElementById('editReplyOnce').checked = settings.reply_once || false;
 
     // 根据启用状态显示/隐藏内容输入框
     toggleReplyContentVisibility();
@@ -1961,6 +1973,7 @@ async function saveDefaultReply() {
     const accountId = document.getElementById('editAccountId').value;
     const enabled = document.getElementById('editDefaultReplyEnabled').checked;
     const replyContent = document.getElementById('editReplyContent').value;
+    const replyOnce = document.getElementById('editReplyOnce').checked;
 
     if (enabled && !replyContent.trim()) {
         showToast('启用默认回复时必须设置回复内容', 'warning');
@@ -1969,7 +1982,8 @@ async function saveDefaultReply() {
 
     const data = {
         enabled: enabled,
-        reply_content: enabled ? replyContent : null
+        reply_content: enabled ? replyContent : null,
+        reply_once: replyOnce
     };
 
     const response = await fetch(`${apiBase}/default-replies/${accountId}`, {
@@ -1999,6 +2013,34 @@ async function saveDefaultReply() {
 // 测试默认回复（占位函数）
 function testDefaultReply(accountId) {
     showToast('测试功能开发中...', 'info');
+}
+
+// 清空默认回复记录
+async function clearDefaultReplyRecords(accountId) {
+    if (!confirm(`确定要清空账号 "${accountId}" 的默认回复记录吗？\n\n清空后，该账号将可以重新对之前回复过的对话进行默认回复。`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${apiBase}/default-replies/${accountId}/clear-records`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (response.ok) {
+            showToast(`账号 "${accountId}" 的默认回复记录已清空`, 'success');
+            loadDefaultReplies(); // 刷新列表
+        } else {
+            const error = await response.text();
+            showToast(`清空失败: ${error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('清空默认回复记录失败:', error);
+        showToast('清空默认回复记录失败', 'danger');
+    }
 }
 
 // ==================== AI回复配置相关函数 ====================

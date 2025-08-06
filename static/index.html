@@ -1888,6 +1888,8 @@
             <code>{send_user_name}</code> 用户昵称、
             <code>{send_user_id}</code> 用户ID、
             <code>{send_message}</code> 用户消息
+            <br><br>
+            <strong>只回复一次：</strong>开启后，每个对话只会触发一次默认回复，避免重复回复同一用户。
           </div>
 
           <div class="table-responsive">
@@ -1895,8 +1897,9 @@
               <thead>
                 <tr>
                   <th style="width: 15%">账号ID</th>
-                  <th style="width: 15%">状态</th>
-                  <th style="width: 50%">默认回复内容</th>
+                  <th style="width: 12%">状态</th>
+                  <th style="width: 12%">只回复一次</th>
+                  <th style="width: 41%">默认回复内容</th>
                   <th style="width: 20%">操作</th>
                 </tr>
               </thead>
@@ -1943,6 +1946,19 @@
                 <label class="form-check-label" for="editDefaultReplyEnabled">
                   启用默认回复
                 </label>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="editReplyOnce" />
+                <label class="form-check-label" for="editReplyOnce">
+                  只回复一次
+                </label>
+                <div class="form-text">
+                  <i class="bi bi-info-circle me-1"></i>
+                  开启后，每个对话只会触发一次默认回复，避免重复回复
+                </div>
               </div>
             </div>
 

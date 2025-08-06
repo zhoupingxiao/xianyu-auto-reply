@@ -858,13 +858,22 @@ async def register(request: RegisterRequest):
 @app.post("/xianyu/reply", response_model=ResponseModel)
 async def xianyu_reply(req: RequestModel):
     msg_template = match_reply(req.cookie_id, req.send_message)
+    is_default_reply = False
+
     if not msg_template:
         # 从数据库获取默认回复
         from db_manager import db_manager
         default_reply_settings = db_manager.get_default_reply(req.cookie_id)
 
         if default_reply_settings and default_reply_settings.get('enabled', False):
+            # 检查是否开启了"只回复一次"功能
+            if default_reply_settings.get('reply_once', False):
+                # 检查是否已经回复过这个chat_id
+                if db_manager.has_default_reply_record(req.cookie_id, req.chat_id):
+                    raise HTTPException(status_code=404, detail="该对话已使用默认回复，不再重复回复")
+
             msg_template = default_reply_settings.get('reply_content', '')
+            is_default_reply = True
 
         # 如果数据库中没有设置或为空，返回错误
         if not msg_template:
@@ -880,6 +889,13 @@ async def xianyu_reply(req: RequestModel):
     except Exception:
         # 如果格式化失败，返回原始内容
         send_msg = msg_template
+
+    # 如果是默认回复且开启了"只回复一次"，记录回复记录
+    if is_default_reply:
+        from db_manager import db_manager
+        default_reply_settings = db_manager.get_default_reply(req.cookie_id)
+        if default_reply_settings and default_reply_settings.get('reply_once', False):
+            db_manager.add_default_reply_record(req.cookie_id, req.chat_id)
 
     return {"code": 200, "data": {"send_msg": send_msg}}
 
@@ -898,6 +914,7 @@ class CookieStatusIn(BaseModel):
 class DefaultReplyIn(BaseModel):
     enabled: bool
     reply_content: Optional[str] = None
+    reply_once: bool = False
 
 
 class NotificationChannelIn(BaseModel):
@@ -1179,7 +1196,7 @@ def get_default_reply(cid: str, current_user: Dict[str, Any] = Depends(get_curre
         result = db_manager.get_default_reply(cid)
         if result is None:
             # 如果没有设置，返回默认值
-            return {'enabled': False, 'reply_content': ''}
+            return {'enabled': False, 'reply_content': '', 'reply_once': False}
         return result
     except HTTPException:
         raise
@@ -1199,8 +1216,8 @@ def update_default_reply(cid: str, reply_data: DefaultReplyIn, current_user: Dic
         if cid not in user_cookies:
             raise HTTPException(status_code=403, detail="无权限操作该Cookie")
 
-        db_manager.save_default_reply(cid, reply_data.enabled, reply_data.reply_content)
-        return {'msg': 'default reply updated', 'enabled': reply_data.enabled}
+        db_manager.save_default_reply(cid, reply_data.enabled, reply_data.reply_content, reply_data.reply_once)
+        return {'msg': 'default reply updated', 'enabled': reply_data.enabled, 'reply_once': reply_data.reply_once}
     except HTTPException:
         raise
     except Exception as e:
@@ -1241,6 +1258,26 @@ def delete_default_reply(cid: str, current_user: Dict[str, Any] = Depends(get_cu
             return {'msg': 'default reply deleted'}
         else:
             raise HTTPException(status_code=400, detail='删除失败')
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post('/default-replies/{cid}/clear-records')
+def clear_default_reply_records(cid: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """清空指定账号的默认回复记录"""
+    from db_manager import db_manager
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        if cid not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+
+        db_manager.clear_default_reply_records(cid)
+        return {'msg': 'default reply records cleared'}
     except HTTPException:
         raise
     except Exception as e:

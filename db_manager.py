@@ -281,8 +281,30 @@ class DBManager:
                 cookie_id TEXT PRIMARY KEY,
                 enabled BOOLEAN DEFAULT FALSE,
                 reply_content TEXT,
+                reply_once BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE
+            )
+            ''')
+
+            # 添加 reply_once 字段（如果不存在）
+            try:
+                cursor.execute('ALTER TABLE default_replies ADD COLUMN reply_once BOOLEAN DEFAULT FALSE')
+                self.conn.commit()
+                logger.info("已添加 reply_once 字段到 default_replies 表")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e).lower():
+                    logger.warning(f"添加 reply_once 字段失败: {e}")
+
+            # 创建默认回复记录表（记录已回复的chat_id）
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS default_reply_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cookie_id TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                replied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(cookie_id, chat_id),
                 FOREIGN KEY (cookie_id) REFERENCES cookies(id) ON DELETE CASCADE
             )
             ''')
@@ -1588,17 +1610,17 @@ class DBManager:
                 return {}
 
     # -------------------- 默认回复操作 --------------------
-    def save_default_reply(self, cookie_id: str, enabled: bool, reply_content: str = None):
+    def save_default_reply(self, cookie_id: str, enabled: bool, reply_content: str = None, reply_once: bool = False):
         """保存默认回复设置"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
                 cursor.execute('''
-                INSERT OR REPLACE INTO default_replies (cookie_id, enabled, reply_content, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                ''', (cookie_id, enabled, reply_content))
+                INSERT OR REPLACE INTO default_replies (cookie_id, enabled, reply_content, reply_once, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (cookie_id, enabled, reply_content, reply_once))
                 self.conn.commit()
-                logger.debug(f"保存默认回复设置: {cookie_id} -> {'启用' if enabled else '禁用'}")
+                logger.debug(f"保存默认回复设置: {cookie_id} -> {'启用' if enabled else '禁用'}, 只回复一次: {'是' if reply_once else '否'}")
             except Exception as e:
                 logger.error(f"保存默认回复设置失败: {e}")
                 raise
@@ -1609,14 +1631,15 @@ class DBManager:
             try:
                 cursor = self.conn.cursor()
                 cursor.execute('''
-                SELECT enabled, reply_content FROM default_replies WHERE cookie_id = ?
+                SELECT enabled, reply_content, reply_once FROM default_replies WHERE cookie_id = ?
                 ''', (cookie_id,))
                 result = cursor.fetchone()
                 if result:
-                    enabled, reply_content = result
+                    enabled, reply_content, reply_once = result
                     return {
                         'enabled': bool(enabled),
-                        'reply_content': reply_content or ''
+                        'reply_content': reply_content or '',
+                        'reply_once': bool(reply_once) if reply_once is not None else False
                     }
                 return None
             except Exception as e:
@@ -1628,20 +1651,60 @@ class DBManager:
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cursor.execute('SELECT cookie_id, enabled, reply_content FROM default_replies')
+                cursor.execute('SELECT cookie_id, enabled, reply_content, reply_once FROM default_replies')
 
                 result = {}
                 for row in cursor.fetchall():
-                    cookie_id, enabled, reply_content = row
+                    cookie_id, enabled, reply_content, reply_once = row
                     result[cookie_id] = {
                         'enabled': bool(enabled),
-                        'reply_content': reply_content or ''
+                        'reply_content': reply_content or '',
+                        'reply_once': bool(reply_once) if reply_once is not None else False
                     }
 
                 return result
             except Exception as e:
                 logger.error(f"获取所有默认回复设置失败: {e}")
                 return {}
+
+    def add_default_reply_record(self, cookie_id: str, chat_id: str):
+        """记录已回复的chat_id"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                INSERT OR IGNORE INTO default_reply_records (cookie_id, chat_id)
+                VALUES (?, ?)
+                ''', (cookie_id, chat_id))
+                self.conn.commit()
+                logger.debug(f"记录默认回复: {cookie_id} -> {chat_id}")
+            except Exception as e:
+                logger.error(f"记录默认回复失败: {e}")
+
+    def has_default_reply_record(self, cookie_id: str, chat_id: str) -> bool:
+        """检查是否已经回复过该chat_id"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT 1 FROM default_reply_records WHERE cookie_id = ? AND chat_id = ?
+                ''', (cookie_id, chat_id))
+                result = cursor.fetchone()
+                return result is not None
+            except Exception as e:
+                logger.error(f"检查默认回复记录失败: {e}")
+                return False
+
+    def clear_default_reply_records(self, cookie_id: str):
+        """清空指定账号的默认回复记录"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('DELETE FROM default_reply_records WHERE cookie_id = ?', (cookie_id,))
+                self.conn.commit()
+                logger.debug(f"清空默认回复记录: {cookie_id}")
+            except Exception as e:
+                logger.error(f"清空默认回复记录失败: {e}")
 
     def delete_default_reply(self, cookie_id: str) -> bool:
         """删除指定账号的默认回复设置"""
