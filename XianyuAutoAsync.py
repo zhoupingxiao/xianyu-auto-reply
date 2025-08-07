@@ -162,6 +162,7 @@ class XianyuLive:
         # 通知防重复机制
         self.last_notification_time = {}  # 记录每种通知类型的最后发送时间
         self.notification_cooldown = 300  # 5分钟内不重复发送相同类型的通知
+        self.token_refresh_notification_cooldown = 10800  # Token刷新异常通知冷却时间：3小时
 
         # 自动发货防重复机制
         self.last_delivery_time = {}  # 记录每个商品的最后发货时间
@@ -1555,8 +1556,29 @@ class XianyuLive:
             current_time = time.time()
             last_time = self.last_notification_time.get(notification_type, 0)
 
-            if current_time - last_time < self.notification_cooldown:
-                logger.debug(f"通知在冷却期内，跳过发送: {notification_type} (距离上次 {int(current_time - last_time)} 秒)")
+            # 为Token刷新异常通知使用特殊的3小时冷却时间
+            # 基于错误消息内容判断是否为Token相关异常
+            if self._is_token_related_error(error_message):
+                cooldown_time = self.token_refresh_notification_cooldown
+                cooldown_desc = "3小时"
+            else:
+                cooldown_time = self.notification_cooldown
+                cooldown_desc = f"{self.notification_cooldown // 60}分钟"
+
+            if current_time - last_time < cooldown_time:
+                remaining_time = cooldown_time - (current_time - last_time)
+                remaining_hours = int(remaining_time // 3600)
+                remaining_minutes = int((remaining_time % 3600) // 60)
+                remaining_seconds = int(remaining_time % 60)
+
+                if remaining_hours > 0:
+                    time_desc = f"{remaining_hours}小时{remaining_minutes}分钟"
+                elif remaining_minutes > 0:
+                    time_desc = f"{remaining_minutes}分钟{remaining_seconds}秒"
+                else:
+                    time_desc = f"{remaining_seconds}秒"
+
+                logger.debug(f"Token刷新通知在冷却期内，跳过发送: {notification_type} (还需等待 {time_desc})")
                 return
 
             from db_manager import db_manager
@@ -1620,7 +1642,17 @@ class XianyuLive:
             # 如果成功发送了通知，更新最后发送时间
             if notification_sent:
                 self.last_notification_time[notification_type] = current_time
-                logger.info(f"Token刷新通知已发送，下次可发送时间: {time.strftime('%H:%M:%S', time.localtime(current_time + self.notification_cooldown))}")
+
+                # 根据错误消息内容使用不同的冷却时间
+                if self._is_token_related_error(error_message):
+                    next_send_time = current_time + self.token_refresh_notification_cooldown
+                    cooldown_desc = "3小时"
+                else:
+                    next_send_time = current_time + self.notification_cooldown
+                    cooldown_desc = f"{self.notification_cooldown // 60}分钟"
+
+                next_send_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(next_send_time))
+                logger.info(f"Token刷新通知已发送，下次可发送时间: {next_send_time_str} (冷却时间: {cooldown_desc})")
 
         except Exception as e:
             logger.error(f"处理Token刷新通知失败: {self._safe_str(e)}")
@@ -1647,6 +1679,52 @@ class XianyuLive:
         # 检查错误消息是否包含不需要通知的关键词
         for keyword in no_notification_keywords:
             if keyword in error_message:
+                return True
+
+        return False
+
+    def _is_token_related_error(self, error_message: str) -> bool:
+        """检查是否是Token相关的错误，需要使用3小时冷却时间"""
+        # Token相关错误的关键词
+        token_error_keywords = [
+            # Token刷新失败相关
+            'Token刷新失败',
+            'Token刷新异常',
+            'token刷新失败',
+            'token刷新异常',
+            'TOKEN刷新失败',
+            'TOKEN刷新异常',
+            # 具体的Token错误信息
+            'FAIL_SYS_USER_VALIDATE',
+            'RGV587_ERROR',
+            '哎哟喂,被挤爆啦',
+            '请稍后重试',
+            'punish?x5secdata',
+            'captcha',
+            # Token获取失败
+            '无法获取有效token',
+            '无法获取有效Token',
+            'Token获取失败',
+            'token获取失败',
+            'TOKEN获取失败',
+            # Token定时刷新失败
+            'Token定时刷新失败',
+            'token定时刷新失败',
+            'TOKEN定时刷新失败',
+            # 初始化Token失败
+            '初始化时无法获取有效Token',
+            '初始化时无法获取有效token',
+            # 其他Token相关错误
+            'accessToken',
+            'access_token',
+            '_m_h5_tk',
+            'mtop.taobao.idlemessage.pc.login.token'
+        ]
+
+        # 检查错误消息是否包含Token相关的关键词
+        error_message_lower = error_message.lower()
+        for keyword in token_error_keywords:
+            if keyword.lower() in error_message_lower:
                 return True
 
         return False
