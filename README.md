@@ -409,7 +409,6 @@ python Start.py
 - **`docker-deploy.bat`** - Windows版本部署脚本，支持Windows环境一键部署
 - **`entrypoint.sh`** - Docker容器启动脚本，处理环境初始化和服务启动
 - **`nginx/nginx.conf`** - Nginx反向代理配置，支持负载均衡和SSL终端
-- **`.env`** - 环境变量配置文件，包含所有可配置的系统参数和敏感信息
 - **`requirements.txt`** - Python依赖包列表，精简版本无冗余依赖，按功能分类组织
 
 ## ⚙️ 配置说明
@@ -517,7 +516,7 @@ python Start.py
 ## ❓ 常见问题
 
 ### 1. 端口被占用
-如果8080端口被占用，可以修改 `.env` 文件中的 `WEB_PORT` 配置。
+如果8080端口被占用，可以修改 `global_config.yml` 文件中的 `AUTO_REPLY.api.port` 配置，或者在 Docker 启动时通过环境变量 `WEB_PORT` 指定端口。
 
 ### 2. 数据库连接失败
 检查数据库文件权限，确保应用有读写权限。

@@ -1120,6 +1120,8 @@ class DBManager:
                 logger.error(f"获取所有Cookie失败: {e}")
                 return {}
 
+
+
     def get_cookie_by_id(self, cookie_id: str) -> Optional[Dict[str, str]]:
         """根据ID获取Cookie信息
 
@@ -4055,6 +4057,14 @@ class DBManager:
             try:
                 cursor = self.conn.cursor()
 
+                # 检查cookie_id是否在cookies表中存在（如果提供了cookie_id）
+                if cookie_id:
+                    cursor.execute("SELECT id FROM cookies WHERE id = ?", (cookie_id,))
+                    cookie_exists = cursor.fetchone()
+                    if not cookie_exists:
+                        logger.warning(f"Cookie ID {cookie_id} 不存在于cookies表中，拒绝插入订单 {order_id}")
+                        return False
+
                 # 检查订单是否已存在
                 cursor.execute("SELECT order_id FROM orders WHERE order_id = ?", (order_id,))
                 existing = cursor.fetchone()
@@ -4189,14 +4199,21 @@ class DBManager:
                 primary_key_map = {
                     'users': 'id',
                     'cookies': 'id',
+                    'cookie_status': 'id',
                     'keywords': 'id',
                     'default_replies': 'id',
+                    'default_reply_records': 'id',
+                    'item_replay': 'item_id',
                     'ai_reply_settings': 'id',
+                    'ai_conversations': 'id',
+                    'ai_item_cache': 'id',
+                    'item_info': 'id',
                     'message_notifications': 'id',
                     'cards': 'id',
                     'delivery_rules': 'id',
                     'notification_channels': 'id',
                     'user_settings': 'id',
+                    'system_settings': 'id',
                     'email_verifications': 'id',
                     'captcha_codes': 'id',
                     'orders': 'order_id'
