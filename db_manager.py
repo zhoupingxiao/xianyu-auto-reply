@@ -660,6 +660,14 @@ class DBManager:
                     self._execute_sql(cursor, "ALTER TABLE item_info ADD COLUMN is_multi_spec BOOLEAN DEFAULT FALSE")
                     logger.info("为item_info表添加多规格字段")
 
+                # 为item_info表添加多数量发货字段（如果不存在）
+                try:
+                    self._execute_sql(cursor, "SELECT multi_quantity_delivery FROM item_info LIMIT 1")
+                except sqlite3.OperationalError:
+                    # 多数量发货字段不存在，需要添加
+                    self._execute_sql(cursor, "ALTER TABLE item_info ADD COLUMN multi_quantity_delivery BOOLEAN DEFAULT FALSE")
+                    logger.info("为item_info表添加多数量发货字段")
+
                 # 处理keywords表的唯一约束问题
                 # 由于SQLite不支持直接修改约束，我们需要重建表
                 self._migrate_keywords_table_constraints(cursor)
@@ -3611,6 +3619,49 @@ class DBManager:
 
         except Exception as e:
             logger.error(f"获取商品多规格状态失败: {e}")
+            return False
+
+    def update_item_multi_quantity_delivery_status(self, cookie_id: str, item_id: str, multi_quantity_delivery: bool) -> bool:
+        """更新商品的多数量发货状态"""
+        try:
+            with self.lock:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                UPDATE item_info
+                SET multi_quantity_delivery = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE cookie_id = ? AND item_id = ?
+                ''', (multi_quantity_delivery, cookie_id, item_id))
+
+                if cursor.rowcount > 0:
+                    self.conn.commit()
+                    logger.info(f"更新商品多数量发货状态成功: {item_id} -> {multi_quantity_delivery}")
+                    return True
+                else:
+                    logger.warning(f"未找到要更新的商品: {item_id}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"更新商品多数量发货状态失败: {e}")
+            self.conn.rollback()
+            return False
+
+    def get_item_multi_quantity_delivery_status(self, cookie_id: str, item_id: str) -> bool:
+        """获取商品的多数量发货状态"""
+        try:
+            with self.lock:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                SELECT multi_quantity_delivery FROM item_info
+                WHERE cookie_id = ? AND item_id = ?
+                ''', (cookie_id, item_id))
+
+                row = cursor.fetchone()
+                if row:
+                    return bool(row[0]) if row[0] is not None else False
+                return False
+
+        except Exception as e:
+            logger.error(f"获取商品多数量发货状态失败: {e}")
             return False
 
     def get_items_by_cookie(self, cookie_id: str) -> List[Dict]:
