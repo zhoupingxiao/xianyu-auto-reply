@@ -2479,7 +2479,7 @@ class DBManager:
                 return False
 
     async def send_verification_email(self, email: str, code: str) -> bool:
-        """发送验证码邮件（仅SMTP）"""
+        """发送验证码邮件（支持SMTP和API两种方式）"""
         try:
             subject = "闲鱼自动回复系统 - 邮箱验证码"
             # 使用简单的纯文本邮件内容
@@ -2515,48 +2515,94 @@ class DBManager:
                 smtp_use_ssl = (self.get_system_setting('smtp_use_ssl') or 'false').lower() == 'true'
             except Exception as e:
                 logger.error(f"读取SMTP系统设置失败: {e}")
-                return False
+                # 如果读取配置失败，使用API方式
+                return await self._send_email_via_api(email, subject, text_content)
 
-            # 校验配置完整性
-            if not (smtp_server and smtp_port and smtp_user and smtp_password):
-                logger.error("SMTP配置不完整，无法发送验证码邮件")
-                return False
-
-            # 使用SMTP方式发送
-            try:
-                import smtplib
-                from email.mime.text import MIMEText
-                from email.mime.multipart import MIMEMultipart
-
-                msg = MIMEMultipart()
-                msg['Subject'] = subject
-                msg['From'] = smtp_from
-                msg['To'] = email
-
-                msg.attach(MIMEText(text_content, 'plain', 'utf-8'))
-
-                if smtp_use_ssl:
-                    server = smtplib.SMTP_SSL(smtp_server, smtp_port)
-                else:
-                    server = smtplib.SMTP(smtp_server, smtp_port)
-
-                server.ehlo()
-                if smtp_use_tls and not smtp_use_ssl:
-                    server.starttls()
-                    server.ehlo()
-
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_user, [email], msg.as_string())
-                server.quit()
-
-                logger.info(f"验证码邮件发送成功(SMTP): {email}")
-                return True
-            except Exception as e:
-                logger.error(f"SMTP发送验证码邮件失败: {e}")
-                return False
+            # 检查SMTP配置是否完整
+            if smtp_server and smtp_port and smtp_user and smtp_password:
+                # 配置完整，使用SMTP方式发送
+                logger.info(f"使用SMTP方式发送验证码邮件: {email}")
+                return await self._send_email_via_smtp(email, subject, text_content,
+                                                     smtp_server, smtp_port, smtp_user,
+                                                     smtp_password, smtp_from, smtp_use_tls, smtp_use_ssl)
+            else:
+                # 配置不完整，使用API方式发送
+                logger.info(f"SMTP配置不完整，使用API方式发送验证码邮件: {email}")
+                return await self._send_email_via_api(email, subject, text_content)
 
         except Exception as e:
             logger.error(f"发送验证码邮件异常: {e}")
+            return False
+
+    async def _send_email_via_smtp(self, email: str, subject: str, text_content: str,
+                                 smtp_server: str, smtp_port: int, smtp_user: str,
+                                 smtp_password: str, smtp_from: str, smtp_use_tls: bool, smtp_use_ssl: bool) -> bool:
+        """使用SMTP方式发送邮件"""
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+
+            msg = MIMEMultipart()
+            msg['Subject'] = subject
+            msg['From'] = smtp_from
+            msg['To'] = email
+
+            msg.attach(MIMEText(text_content, 'plain', 'utf-8'))
+
+            if smtp_use_ssl:
+                server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            else:
+                server = smtplib.SMTP(smtp_server, smtp_port)
+
+            server.ehlo()
+            if smtp_use_tls and not smtp_use_ssl:
+                server.starttls()
+                server.ehlo()
+
+            server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_user, [email], msg.as_string())
+            server.quit()
+
+            logger.info(f"验证码邮件发送成功(SMTP): {email}")
+            return True
+        except Exception as e:
+            logger.error(f"SMTP发送验证码邮件失败: {e}")
+            # SMTP发送失败，尝试使用API方式
+            logger.info(f"SMTP发送失败，尝试使用API方式发送: {email}")
+            return await self._send_email_via_api(email, subject, text_content)
+
+    async def _send_email_via_api(self, email: str, subject: str, text_content: str) -> bool:
+        """使用API方式发送邮件"""
+        try:
+            import aiohttp
+
+            # 使用GET请求发送邮件
+            api_url = "https://dy.zhinianboke.com/api/emailSend"
+            params = {
+                'subject': subject,
+                'receiveUser': email,
+                'sendHtml': text_content
+            }
+
+            async with aiohttp.ClientSession() as session:
+                try:
+                    logger.info(f"使用API发送验证码邮件: {email}")
+                    async with session.get(api_url, params=params, timeout=15) as response:
+                        response_text = await response.text()
+                        logger.info(f"邮件API响应: {response.status}")
+
+                        if response.status == 200:
+                            logger.info(f"验证码邮件发送成功(API): {email}")
+                            return True
+                        else:
+                            logger.error(f"API发送验证码邮件失败: {email}, 状态码: {response.status}, 响应: {response_text[:200]}")
+                            return False
+                except Exception as e:
+                    logger.error(f"API邮件发送异常: {email}, 错误: {e}")
+                    return False
+        except Exception as e:
+            logger.error(f"API邮件发送方法异常: {e}")
             return False
 
     # ==================== 卡券管理方法 ====================
