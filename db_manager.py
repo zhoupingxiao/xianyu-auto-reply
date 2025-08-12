@@ -277,6 +277,15 @@ class DBManager:
             )
             ''')
 
+            # 检查并添加 multi_quantity_delivery 列（用于多数量发货功能）
+            try:
+                self._execute_sql(cursor, "SELECT multi_quantity_delivery FROM item_info LIMIT 1")
+            except sqlite3.OperationalError:
+                # multi_quantity_delivery 列不存在，需要添加
+                logger.info("正在为 item_info 表添加 multi_quantity_delivery 列...")
+                self._execute_sql(cursor, "ALTER TABLE item_info ADD COLUMN multi_quantity_delivery BOOLEAN DEFAULT FALSE")
+                logger.info("item_info 表 multi_quantity_delivery 列添加完成")
+
             # 创建自动发货规则表
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS delivery_rules (
