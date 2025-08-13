@@ -170,9 +170,6 @@ class XianyuLive:
         self.token_refresh_task = None
         self.connection_restart_flag = False  # 连接重启标志
 
-        # 从数据库获取token信息
-        self._load_token_info_from_db()
-
         # 通知防重复机制
         self.last_notification_time = {}  # 记录每种通知类型的最后发送时间
         self.notification_cooldown = 300  # 5分钟内不重复发送相同类型的通知
@@ -194,44 +191,7 @@ class XianyuLive:
         # 启动定期清理过期暂停记录的任务
         self.cleanup_task = None
 
-    def _load_token_info_from_db(self):
-        """从数据库加载token信息"""
-        try:
-            from db_manager import db_manager
-            token_info = db_manager.get_token_info(self.cookie_id)
 
-            if token_info:
-                self.last_token_refresh_time = token_info.get('last_token_refresh_time', 0)
-                self.current_token = token_info.get('current_token', None)
-                logger.info(f"【{self.cookie_id}】从数据库加载token信息成功 - 上次刷新时间: {self.last_token_refresh_time}, token: {'已设置' if self.current_token else '未设置'}")
-            else:
-                logger.info(f"【{self.cookie_id}】数据库中未找到token信息，使用默认值")
-                self.last_token_refresh_time = 0
-                self.current_token = None
-
-        except Exception as e:
-            logger.error(f"【{self.cookie_id}】从数据库加载token信息失败: {self._safe_str(e)}")
-            # 使用默认值
-            self.last_token_refresh_time = 0
-            self.current_token = None
-
-    def _save_token_info_to_db(self):
-        """保存token信息到数据库"""
-        try:
-            from db_manager import db_manager
-            success = db_manager.update_token_info(
-                self.cookie_id,
-                self.last_token_refresh_time,
-                self.current_token
-            )
-
-            if success:
-                logger.debug(f"【{self.cookie_id}】token信息已保存到数据库")
-            else:
-                logger.warning(f"【{self.cookie_id}】token信息保存到数据库失败")
-
-        except Exception as e:
-            logger.error(f"【{self.cookie_id}】保存token信息到数据库异常: {self._safe_str(e)}")
 
     def is_auto_confirm_enabled(self) -> bool:
         """检查当前账号是否启用自动确认发货"""
@@ -765,9 +725,6 @@ class XianyuLive:
                                 self.current_token = new_token
                                 self.last_token_refresh_time = time.time()
 
-                                # 保存token信息到数据库
-                                self._save_token_info_to_db()
-
                                 logger.info(f"【{self.cookie_id}】Token刷新成功")
                                 return new_token
 
@@ -797,13 +754,7 @@ class XianyuLive:
                         current_user_id = self.user_id
 
                     # 保存cookies和token信息
-                    db_manager.save_cookie(
-                        self.cookie_id,
-                        self.cookies_str,
-                        current_user_id,
-                        self.last_token_refresh_time,
-                        self.current_token
-                    )
+                    db_manager.save_cookie(self.cookie_id, self.cookies_str, current_user_id)
                     logger.debug(f"已更新Cookie和token信息到数据库: {self.cookie_id}")
                 except Exception as e:
                     logger.error(f"更新数据库Cookie失败: {self._safe_str(e)}")
