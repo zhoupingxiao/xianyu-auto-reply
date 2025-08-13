@@ -115,10 +115,27 @@ class DBManager:
                 auto_confirm INTEGER DEFAULT 1,
                 remark TEXT DEFAULT '',
                 pause_duration INTEGER DEFAULT 10,
+                last_token_refresh_time REAL DEFAULT 0,
+                current_token TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             ''')
+
+            # 为现有的cookies表添加新字段（如果不存在）
+            try:
+                cursor.execute('ALTER TABLE cookies ADD COLUMN last_token_refresh_time REAL DEFAULT 0')
+                logger.info("已为cookies表添加last_token_refresh_time字段")
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略错误
+                pass
+
+            try:
+                cursor.execute('ALTER TABLE cookies ADD COLUMN current_token TEXT DEFAULT ""')
+                logger.info("已为cookies表添加current_token字段")
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略错误
+                pass
             
             # 创建keywords表
             cursor.execute('''
@@ -1063,7 +1080,8 @@ class DBManager:
         return cursor.executemany(sql, params_list)
     
     # -------------------- Cookie操作 --------------------
-    def save_cookie(self, cookie_id: str, cookie_value: str, user_id: int = None) -> bool:
+    def save_cookie(self, cookie_id: str, cookie_value: str, user_id: int = None,
+                   last_token_refresh_time: float = None, current_token: str = None) -> bool:
         """保存Cookie到数据库，如存在则更新"""
         with self.lock:
             try:
@@ -1081,10 +1099,38 @@ class DBManager:
                         admin_user = cursor.fetchone()
                         user_id = admin_user[0] if admin_user else 1
 
-                self._execute_sql(cursor,
-                    "INSERT OR REPLACE INTO cookies (id, value, user_id) VALUES (?, ?, ?)",
-                    (cookie_id, cookie_value, user_id)
-                )
+                # 如果提供了token相关信息，则更新这些字段
+                if last_token_refresh_time is not None or current_token is not None:
+                    # 先获取现有记录的token信息
+                    self._execute_sql(cursor,
+                        "SELECT last_token_refresh_time, current_token FROM cookies WHERE id = ?",
+                        (cookie_id,))
+                    existing_token_info = cursor.fetchone()
+
+                    if existing_token_info:
+                        # 如果没有提供新值，使用现有值
+                        if last_token_refresh_time is None:
+                            last_token_refresh_time = existing_token_info[0]
+                        if current_token is None:
+                            current_token = existing_token_info[1]
+                    else:
+                        # 如果没有现有记录，使用默认值
+                        if last_token_refresh_time is None:
+                            last_token_refresh_time = 0
+                        if current_token is None:
+                            current_token = ''
+
+                    self._execute_sql(cursor,
+                        "INSERT OR REPLACE INTO cookies (id, value, user_id, last_token_refresh_time, current_token) VALUES (?, ?, ?, ?, ?)",
+                        (cookie_id, cookie_value, user_id, last_token_refresh_time, current_token)
+                    )
+                else:
+                    # 如果没有提供token信息，保持现有的token信息不变
+                    self._execute_sql(cursor,
+                        "INSERT OR REPLACE INTO cookies (id, value, user_id) VALUES (?, ?, ?)",
+                        (cookie_id, cookie_value, user_id)
+                    )
+
                 self.conn.commit()
                 logger.info(f"Cookie保存成功: {cookie_id} (用户ID: {user_id})")
 
@@ -1100,6 +1146,69 @@ class DBManager:
                 logger.error(f"Cookie保存失败: {e}")
                 self.conn.rollback()
                 return False
+
+    def update_token_info(self, cookie_id: str, last_token_refresh_time: float = None, current_token: str = None) -> bool:
+        """更新Cookie的token信息"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+
+                # 构建动态SQL语句
+                update_fields = []
+                params = []
+
+                if last_token_refresh_time is not None:
+                    update_fields.append("last_token_refresh_time = ?")
+                    params.append(last_token_refresh_time)
+
+                if current_token is not None:
+                    update_fields.append("current_token = ?")
+                    params.append(current_token)
+
+                if not update_fields:
+                    logger.warning(f"没有提供要更新的token信息: {cookie_id}")
+                    return True
+
+                params.append(cookie_id)
+                sql = f"UPDATE cookies SET {', '.join(update_fields)} WHERE id = ?"
+
+                self._execute_sql(cursor, sql, params)
+                self.conn.commit()
+
+                if cursor.rowcount > 0:
+                    logger.debug(f"Token信息更新成功: {cookie_id}")
+                    return True
+                else:
+                    logger.warning(f"未找到要更新的Cookie记录: {cookie_id}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Token信息更新失败: {e}")
+                self.conn.rollback()
+                return False
+
+    def get_token_info(self, cookie_id: str) -> Optional[Dict[str, any]]:
+        """获取Cookie的token信息"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor,
+                    "SELECT last_token_refresh_time, current_token FROM cookies WHERE id = ?",
+                    (cookie_id,))
+                result = cursor.fetchone()
+
+                if result:
+                    return {
+                        'last_token_refresh_time': result[0] if result[0] is not None else 0,
+                        'current_token': result[1] if result[1] is not None else ''
+                    }
+                else:
+                    logger.warning(f"未找到Cookie记录: {cookie_id}")
+                    return None
+
+            except Exception as e:
+                logger.error(f"获取Token信息失败: {e}")
+                return None
     
     def delete_cookie(self, cookie_id: str) -> bool:
         """从数据库删除Cookie及其关键字"""
