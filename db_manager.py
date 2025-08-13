@@ -120,13 +120,6 @@ class DBManager:
             )
             ''')
 
-
-            try:
-                cursor.execute('ALTER TABLE cookies ADD COLUMN current_token TEXT DEFAULT ""')
-                logger.info("已为cookies表添加current_token字段")
-            except sqlite3.OperationalError:
-                # 字段已存在，忽略错误
-                pass
             
             # 创建keywords表
             cursor.execute('''

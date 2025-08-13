@@ -753,7 +753,6 @@ class XianyuLive:
                     if hasattr(self, 'user_id') and self.user_id:
                         current_user_id = self.user_id
 
-                    # 保存cookies和token信息
                     db_manager.save_cookie(self.cookie_id, self.cookies_str, current_user_id)
                     logger.debug(f"已更新Cookie到数据库: {self.cookie_id}")
                 except Exception as e:
