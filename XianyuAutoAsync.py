@@ -191,6 +191,8 @@ class XianyuLive:
         # 启动定期清理过期暂停记录的任务
         self.cleanup_task = None
 
+
+
     def is_auto_confirm_enabled(self) -> bool:
         """检查当前账号是否启用自动确认发货"""
         try:
@@ -722,6 +724,7 @@ class XianyuLive:
                                 new_token = res_json['data']['accessToken']
                                 self.current_token = new_token
                                 self.last_token_refresh_time = time.time()
+
                                 logger.info(f"【{self.cookie_id}】Token刷新成功")
                                 return new_token
 
