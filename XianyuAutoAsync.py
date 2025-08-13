@@ -755,7 +755,7 @@ class XianyuLive:
 
                     # 保存cookies和token信息
                     db_manager.save_cookie(self.cookie_id, self.cookies_str, current_user_id)
-                    logger.debug(f"已更新Cookie和token信息到数据库: {self.cookie_id}")
+                    logger.debug(f"已更新Cookie到数据库: {self.cookie_id}")
                 except Exception as e:
                     logger.error(f"更新数据库Cookie失败: {self._safe_str(e)}")
                     # 发送数据库更新失败通知

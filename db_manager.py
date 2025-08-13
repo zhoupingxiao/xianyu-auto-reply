@@ -120,13 +120,6 @@ class DBManager:
             )
             ''')
 
-            # 为现有的cookies表添加新字段（如果不存在）
-            try:
-                cursor.execute('ALTER TABLE cookies ADD COLUMN last_token_refresh_time REAL DEFAULT 0')
-                logger.info("已为cookies表添加last_token_refresh_time字段")
-            except sqlite3.OperationalError:
-                # 字段已存在，忽略错误
-                pass
 
             try:
                 cursor.execute('ALTER TABLE cookies ADD COLUMN current_token TEXT DEFAULT ""')
@@ -1096,7 +1089,6 @@ class DBManager:
                         admin_user = cursor.fetchone()
                         user_id = admin_user[0] if admin_user else 1
 
-                # 如果提供了token相关信息，则更新这些字段
                 self._execute_sql(cursor,
                     "INSERT OR REPLACE INTO cookies (id, value, user_id) VALUES (?, ?, ?)",
                     (cookie_id, cookie_value, user_id)
