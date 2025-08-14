@@ -76,20 +76,6 @@ async def main():
     setup_file_logging()
     logger.info("文件日志收集器已启动，开始收集实时日志")
 
-    # 检查 Playwright 可用性
-    print("检查 Playwright 可用性...")
-    try:
-        from playwright_checker import check_playwright_sync
-        playwright_available = check_playwright_sync()
-        if playwright_available:
-            logger.info("✅ Playwright 功能正常，订单详情获取和多数量发货功能可用")
-        else:
-            logger.warning("⚠️ Playwright 功能异常，订单详情获取功能将不可用")
-            logger.warning("系统将以降级模式运行，基础功能不受影响")
-    except Exception as e:
-        logger.error(f"Playwright 检查失败: {e}")
-        logger.warning("系统将以降级模式运行，基础功能不受影响")
-
     loop = asyncio.get_running_loop()
 
     # 创建 CookieManager 并在全局暴露
