@@ -444,51 +444,18 @@ async def admin_page():
         return HTMLResponse(f.read())
 
 
-# 用户管理页面路由
-@app.get('/user_management.html', response_class=HTMLResponse)
-async def user_management_page():
-    page_path = os.path.join(static_dir, 'user_management.html')
-    if os.path.exists(page_path):
-        with open(page_path, 'r', encoding='utf-8') as f:
-            return HTMLResponse(f.read())
-    else:
-        return HTMLResponse('<h3>User management page not found</h3>')
-
-
-# 日志管理页面路由
-@app.get('/log_management.html', response_class=HTMLResponse)
-async def log_management_page():
-    page_path = os.path.join(static_dir, 'log_management.html')
-    if os.path.exists(page_path):
-        with open(page_path, 'r', encoding='utf-8') as f:
-            return HTMLResponse(f.read())
-    else:
-        return HTMLResponse('<h3>Log management page not found</h3>')
-
-
-# 数据管理页面路由
-@app.get('/data_management.html', response_class=HTMLResponse)
-async def data_management_page():
-    page_path = os.path.join(static_dir, 'data_management.html')
-    if os.path.exists(page_path):
-        with open(page_path, 'r', encoding='utf-8') as f:
-            return HTMLResponse(f.read())
-    else:
-        return HTMLResponse('<h3>Data management page not found</h3>')
 
 
 
 
 
-# 商品搜索页面路由
-@app.get('/item_search.html', response_class=HTMLResponse)
-async def item_search_page():
-    page_path = os.path.join(static_dir, 'item_search.html')
-    if os.path.exists(page_path):
-        with open(page_path, 'r', encoding='utf-8') as f:
-            return HTMLResponse(f.read())
-    else:
-        return HTMLResponse('<h3>Item search page not found</h3>')
+
+
+
+
+
+
+
 
 
 # 登录接口
