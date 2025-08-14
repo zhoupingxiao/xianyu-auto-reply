@@ -665,6 +665,12 @@ async def fetch_order_detail_simple(order_id: str, cookie_string: str = None, he
         - timestamp: 获取时间戳
         失败时返回None
     """
+    # 检查 Playwright 是否可用
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        logger.error("Playwright 未安装，无法获取订单详情")
+        return None
     # 先检查数据库中是否有有效数据
     try:
         from db_manager import db_manager
