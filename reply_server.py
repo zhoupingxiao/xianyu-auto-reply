@@ -2851,32 +2851,6 @@ async def search_multiple_pages(
         raise HTTPException(status_code=500, detail=f"多页商品搜索失败: {error_msg}")
 
 
-@app.get("/items/detail/{item_id}")
-async def get_public_item_detail(
-    item_id: str,
-    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
-):
-    """获取公开商品详情（通过外部API）"""
-    try:
-        from utils.item_search import get_item_detail_from_api
-
-        # 从外部API获取商品详情
-        detail = await get_item_detail_from_api(item_id)
-
-        if detail:
-            return {
-                "success": True,
-                "data": detail
-            }
-        else:
-            raise HTTPException(status_code=404, detail="商品详情获取失败")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取商品详情失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取商品详情失败: {str(e)}")
-
 
 @app.get("/items/cookie/{cookie_id}")
 def get_items_by_cookie(cookie_id: str, current_user: Dict[str, Any] = Depends(get_current_user)):
