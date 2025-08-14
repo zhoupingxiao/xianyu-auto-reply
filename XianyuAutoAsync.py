@@ -475,14 +475,16 @@ class XianyuLive:
             # 提取订单ID
             order_id = self._extract_order_id(message)
 
-            # 订单ID已提取，将在自动发货时进行确认发货处理
-            if order_id:
-                logger.info(f'[{msg_time}] 【{self.cookie_id}】提取到订单ID: {order_id}，将在自动发货时处理确认发货')
-            else:
-                logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID')
+            # 如果order_id不存在，直接返回
+            if not order_id:
+                logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID，跳过自动发货')
+                return
 
-            # 使用订单ID作为锁的键，如果没有订单ID则使用item_id+chat_id组合
-            lock_key = order_id if order_id else f"{item_id}_{chat_id}"
+            # 订单ID已提取，将在自动发货时进行确认发货处理
+            logger.info(f'[{msg_time}] 【{self.cookie_id}】提取到订单ID: {order_id}，将在自动发货时处理确认发货')
+
+            # 使用订单ID作为锁的键
+            lock_key = order_id
 
             # 第一重检查：延迟锁状态（在获取锁之前检查，避免不必要的等待）
             if self.is_lock_held(lock_key):
@@ -3585,21 +3587,21 @@ class XianyuLive:
 
                         # 提取订单ID
                         order_id = self._extract_order_id(message)
-                        if order_id:
-                            # 延迟2秒后执行免拼发货
-                            logger.info(f'[{msg_time}] 【{self.cookie_id}】延迟2秒后执行免拼发货...')
-                            await asyncio.sleep(2)
-                            # 调用自动免拼发货方法
-                            result = await self.auto_freeshipping(order_id, item_id, send_user_id)
-                            if result.get('success'):
-                                logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 自动免拼发货成功')
-                            else:
-                                logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 自动免拼发货失败: {result.get("error", "未知错误")}')
-                            await self._handle_auto_delivery(websocket, message, send_user_name, send_user_id,
-                                                           item_id, chat_id, msg_time)
-                            return
-                        else:
+                        if not order_id:
                             logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 未能提取到订单ID，无法执行免拼发货')
+                            return
+
+                        # 延迟2秒后执行免拼发货
+                        logger.info(f'[{msg_time}] 【{self.cookie_id}】延迟2秒后执行免拼发货...')
+                        await asyncio.sleep(2)
+                        # 调用自动免拼发货方法
+                        result = await self.auto_freeshipping(order_id, item_id, send_user_id)
+                        if result.get('success'):
+                            logger.info(f'[{msg_time}] 【{self.cookie_id}】✅ 自动免拼发货成功')
+                        else:
+                            logger.warning(f'[{msg_time}] 【{self.cookie_id}】❌ 自动免拼发货失败: {result.get("error", "未知错误")}')
+                        await self._handle_auto_delivery(websocket, message, send_user_name, send_user_id,
+                                                       item_id, chat_id, msg_time)
                         return
                     else:
                         logger.info(f'[{msg_time}] 【{self.cookie_id}】收到卡片消息，标题: {card_title or "未知"}')
