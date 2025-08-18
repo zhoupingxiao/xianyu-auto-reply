@@ -3282,13 +3282,62 @@ class XianyuLive:
         playwright = None
         browser = None
         try:
+            import asyncio
             from playwright.async_api import async_playwright
 
             logger.info(f"【{self.cookie_id}】开始通过浏览器刷新Cookie...")
             logger.info(f"【{self.cookie_id}】刷新前Cookie长度: {len(self.cookies_str)}")
             logger.info(f"【{self.cookie_id}】刷新前Cookie字段数: {len(self.cookies)}")
 
-            playwright = await async_playwright().start()
+            # Docker环境下修复asyncio子进程问题
+            is_docker = os.getenv('DOCKER_ENV') or os.path.exists('/.dockerenv')
+
+            if is_docker:
+                logger.debug(f"【{self.cookie_id}】检测到Docker环境，应用asyncio修复")
+
+                # 创建一个完整的虚拟子进程监视器
+                class DummyChildWatcher:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *args):
+                        pass
+
+                    def is_active(self):
+                        return True
+
+                    def add_child_handler(self, *args, **kwargs):
+                        pass
+
+                    def remove_child_handler(self, *args, **kwargs):
+                        pass
+
+                    def attach_loop(self, *args, **kwargs):
+                        pass
+
+                    def close(self):
+                        pass
+
+                    def __del__(self):
+                        pass
+
+                # 创建自定义事件循环策略
+                class DockerEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
+                    def get_child_watcher(self):
+                        return DummyChildWatcher()
+
+                # 临时设置策略
+                old_policy = asyncio.get_event_loop_policy()
+                asyncio.set_event_loop_policy(DockerEventLoopPolicy())
+
+                try:
+                    playwright = await async_playwright().start()
+                finally:
+                    # 恢复原策略
+                    asyncio.set_event_loop_policy(old_policy)
+            else:
+                # 非Docker环境，正常启动
+                playwright = await async_playwright().start()
 
             # 启动浏览器（参照商品搜索的配置）
             browser_args = [
