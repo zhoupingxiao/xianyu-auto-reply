@@ -3268,12 +3268,18 @@ class XianyuLive:
     async def _execute_cookie_refresh(self, current_time):
         """独立执行Cookie刷新任务，避免阻塞主循环"""
         try:
-            success = await self._refresh_cookies_via_browser()
+            # 为整个Cookie刷新任务添加超时保护（5分钟）
+            success = await asyncio.wait_for(
+                self._refresh_cookies_via_browser(),
+                timeout=300.0  # 5分钟超时
+            )
             if success:
                 self.last_cookie_refresh_time = current_time
                 logger.info(f"【{self.cookie_id}】Cookie刷新任务完成")
             else:
                 logger.warning(f"【{self.cookie_id}】Cookie刷新任务失败")
+        except asyncio.TimeoutError:
+            logger.error(f"【{self.cookie_id}】Cookie刷新任务超时（5分钟）")
         except Exception as e:
             logger.error(f"【{self.cookie_id}】执行Cookie刷新任务异常: {self._safe_str(e)}")
 
@@ -3331,13 +3337,28 @@ class XianyuLive:
                 asyncio.set_event_loop_policy(DockerEventLoopPolicy())
 
                 try:
-                    playwright = await async_playwright().start()
+                    # 添加超时机制，避免无限等待
+                    playwright = await asyncio.wait_for(
+                        async_playwright().start(),
+                        timeout=30.0  # 30秒超时
+                    )
+                    logger.debug(f"【{self.cookie_id}】Docker环境下Playwright启动成功")
+                except asyncio.TimeoutError:
+                    logger.error(f"【{self.cookie_id}】Docker环境下Playwright启动超时")
+                    return False
                 finally:
                     # 恢复原策略
                     asyncio.set_event_loop_policy(old_policy)
             else:
-                # 非Docker环境，正常启动
-                playwright = await async_playwright().start()
+                # 非Docker环境，正常启动（也添加超时保护）
+                try:
+                    playwright = await asyncio.wait_for(
+                        async_playwright().start(),
+                        timeout=30.0  # 30秒超时
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"【{self.cookie_id}】Playwright启动超时")
+                    return False
 
             # 启动浏览器（参照商品搜索的配置）
             browser_args = [
