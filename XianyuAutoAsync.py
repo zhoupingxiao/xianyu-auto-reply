@@ -197,8 +197,15 @@ class XianyuLive:
 
         # Cookie刷新定时任务
         self.cookie_refresh_task = None
-        self.cookie_refresh_interval = 300  # 1小时 = 3600秒
+        self.cookie_refresh_interval = 600  # 1小时 = 3600秒
         self.last_cookie_refresh_time = 0
+        self.cookie_refresh_running = False  # 防止重复执行Cookie刷新
+        self.cookie_refresh_enabled = True  # 是否启用Cookie刷新功能
+
+        # WebSocket连接监控
+        self.connection_failures = 0  # 连续连接失败次数
+        self.max_connection_failures = 5  # 最大连续失败次数
+        self.last_successful_connection = 0  # 上次成功连接时间
 
 
 
@@ -738,13 +745,20 @@ class XianyuLive:
                                 return new_token
 
                     logger.error(f"【{self.cookie_id}】Token刷新失败: {res_json}")
-                    
+
+                    # 清空当前token，确保下次重试时重新获取
+                    self.current_token = None
+
                     # 发送Token刷新失败通知
                     await self.send_token_refresh_notification(f"Token刷新失败: {res_json}", "token_refresh_failed")
                     return None
 
         except Exception as e:
             logger.error(f"Token刷新异常: {self._safe_str(e)}")
+
+            # 清空当前token，确保下次重试时重新获取
+            self.current_token = None
+
             # 发送Token刷新异常通知
             await self.send_token_refresh_notification(f"Token刷新异常: {str(e)}", "token_refresh_exception")
             return None
@@ -3051,6 +3065,10 @@ class XianyuLive:
                         break
                     else:
                         logger.error(f"【{self.cookie_id}】Token刷新失败，将在{self.token_retry_interval // 60}分钟后重试")
+
+                        # 清空当前token，确保下次重试时重新获取
+                        self.current_token = None
+
                         # 发送Token刷新失败通知
                         await self.send_token_refresh_notification("Token定时刷新失败，将自动重试", "token_scheduled_refresh_failed")
                         await asyncio.sleep(self.token_retry_interval)
@@ -3196,6 +3214,9 @@ class XianyuLive:
 
     async def heartbeat_loop(self, ws):
         """心跳循环"""
+        consecutive_failures = 0
+        max_failures = 3  # 连续失败3次后停止心跳
+
         while True:
             try:
                 # 检查账号是否启用
@@ -3204,11 +3225,32 @@ class XianyuLive:
                     logger.info(f"【{self.cookie_id}】账号已禁用，停止心跳循环")
                     break
 
+                # 检查WebSocket连接状态
+                if ws.closed:
+                    logger.warning(f"【{self.cookie_id}】WebSocket连接已关闭，停止心跳循环")
+                    break
+
                 await self.send_heartbeat(ws)
+                consecutive_failures = 0  # 重置失败计数
+
+                # 检查心跳响应超时
+                current_time = time.time()
+                if (self.last_heartbeat_response > 0 and
+                    current_time - self.last_heartbeat_response > self.heartbeat_timeout):
+                    logger.warning(f"【{self.cookie_id}】心跳响应超时，可能存在连接问题")
+
                 await asyncio.sleep(self.heartbeat_interval)
+
             except Exception as e:
-                logger.error(f"心跳发送失败: {self._safe_str(e)}")
-                break
+                consecutive_failures += 1
+                logger.error(f"心跳发送失败 ({consecutive_failures}/{max_failures}): {self._safe_str(e)}")
+
+                if consecutive_failures >= max_failures:
+                    logger.error(f"【{self.cookie_id}】心跳连续失败{max_failures}次，停止心跳循环")
+                    break
+
+                # 失败后短暂等待再重试
+                await asyncio.sleep(5)
 
     async def handle_heartbeat_response(self, message_data):
         """处理心跳响应"""
@@ -3253,11 +3295,21 @@ class XianyuLive:
                     logger.info(f"【{self.cookie_id}】账号已禁用，停止Cookie刷新循环")
                     break
 
+                # 检查Cookie刷新功能是否启用
+                if not self.cookie_refresh_enabled:
+                    logger.debug(f"【{self.cookie_id}】Cookie刷新功能已禁用，跳过执行")
+                    await asyncio.sleep(300)  # 5分钟后再检查
+                    continue
+
                 current_time = time.time()
                 if current_time - self.last_cookie_refresh_time >= self.cookie_refresh_interval:
-                    logger.info(f"【{self.cookie_id}】开始执行Cookie刷新任务...")
-                    # 在独立的任务中执行Cookie刷新，避免阻塞主循环
-                    asyncio.create_task(self._execute_cookie_refresh(current_time))
+                    # 检查是否已有Cookie刷新任务在执行
+                    if self.cookie_refresh_running:
+                        logger.debug(f"【{self.cookie_id}】Cookie刷新任务已在执行中，跳过本次触发")
+                    else:
+                        logger.info(f"【{self.cookie_id}】开始执行Cookie刷新任务...")
+                        # 在独立的任务中执行Cookie刷新，避免阻塞主循环
+                        asyncio.create_task(self._execute_cookie_refresh(current_time))
 
                 # 每分钟检查一次是否需要执行
                 await asyncio.sleep(60)
@@ -3267,21 +3319,65 @@ class XianyuLive:
 
     async def _execute_cookie_refresh(self, current_time):
         """独立执行Cookie刷新任务，避免阻塞主循环"""
+        # 设置运行状态，防止重复执行
+        self.cookie_refresh_running = True
+
         try:
-            # 为整个Cookie刷新任务添加超时保护（5分钟）
+            logger.info(f"【{self.cookie_id}】开始Cookie刷新任务，暂时暂停心跳以避免连接冲突...")
+
+            # 暂时暂停心跳任务，避免与浏览器操作冲突
+            heartbeat_was_running = False
+            if self.heartbeat_task and not self.heartbeat_task.done():
+                heartbeat_was_running = True
+                self.heartbeat_task.cancel()
+                logger.debug(f"【{self.cookie_id}】已暂停心跳任务")
+
+            # 为整个Cookie刷新任务添加超时保护（3分钟，缩短时间减少影响）
             success = await asyncio.wait_for(
                 self._refresh_cookies_via_browser(),
-                timeout=300.0  # 5分钟超时
+                timeout=180.0  # 3分钟超时，减少对WebSocket的影响
             )
+
+            # 重新启动心跳任务
+            if heartbeat_was_running and self.ws and not self.ws.closed:
+                logger.debug(f"【{self.cookie_id}】重新启动心跳任务")
+                self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(self.ws))
+
             if success:
                 self.last_cookie_refresh_time = current_time
-                logger.info(f"【{self.cookie_id}】Cookie刷新任务完成")
+                logger.info(f"【{self.cookie_id}】Cookie刷新任务完成，心跳已恢复")
             else:
                 logger.warning(f"【{self.cookie_id}】Cookie刷新任务失败")
+                # 即使失败也要更新时间，避免频繁重试
+                self.last_cookie_refresh_time = current_time
+
         except asyncio.TimeoutError:
-            logger.error(f"【{self.cookie_id}】Cookie刷新任务超时（5分钟）")
+            logger.error(f"【{self.cookie_id}】Cookie刷新任务超时（3分钟）")
+            # 超时也要更新时间，避免频繁重试
+            self.last_cookie_refresh_time = current_time
         except Exception as e:
             logger.error(f"【{self.cookie_id}】执行Cookie刷新任务异常: {self._safe_str(e)}")
+            # 异常也要更新时间，避免频繁重试
+            self.last_cookie_refresh_time = current_time
+        finally:
+            # 确保心跳任务恢复（如果WebSocket仍然连接）
+            if (self.ws and not self.ws.closed and
+                (not self.heartbeat_task or self.heartbeat_task.done())):
+                logger.info(f"【{self.cookie_id}】Cookie刷新完成，确保心跳任务正常运行")
+                self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(self.ws))
+
+            # 清除运行状态
+            self.cookie_refresh_running = False
+
+    def enable_cookie_refresh(self, enabled: bool = True):
+        """启用或禁用Cookie刷新功能"""
+        self.cookie_refresh_enabled = enabled
+        status = "启用" if enabled else "禁用"
+        logger.info(f"【{self.cookie_id}】Cookie刷新功能已{status}")
+
+    def disable_cookie_refresh(self):
+        """禁用Cookie刷新功能"""
+        self.enable_cookie_refresh(False)
 
     async def _refresh_cookies_via_browser(self):
         """通过浏览器访问指定页面刷新Cookie"""
@@ -3434,22 +3530,22 @@ class XianyuLive:
             target_url = "https://www.goofish.com/im?spm=a21ybx.home.sidebar.1.4c053da6vYwnmf"
             logger.info(f"【{self.cookie_id}】访问页面: {target_url}")
 
-            # 缩短超时时间，避免影响WebSocket连接
-            await page.goto(target_url, wait_until='domcontentloaded', timeout=15000)
+            # 进一步缩短超时时间，减少对WebSocket的影响
+            await page.goto(target_url, wait_until='domcontentloaded', timeout=10000)
 
-            # 缩短等待时间
-            logger.info(f"【{self.cookie_id}】等待页面加载...")
-            await asyncio.sleep(2)
+            # 最小化等待时间
+            logger.info(f"【{self.cookie_id}】页面加载完成，快速刷新...")
+            await asyncio.sleep(1)
 
-            # 第一次刷新
+            # 第一次刷新 - 缩短超时时间
             logger.info(f"【{self.cookie_id}】执行第一次刷新...")
-            await page.reload(wait_until='domcontentloaded', timeout=15000)
-            await asyncio.sleep(2)
+            await page.reload(wait_until='domcontentloaded', timeout=8000)
+            await asyncio.sleep(1)
 
-            # 第二次刷新
+            # 第二次刷新 - 缩短超时时间
             logger.info(f"【{self.cookie_id}】执行第二次刷新...")
-            await page.reload(wait_until='domcontentloaded', timeout=15000)
-            await asyncio.sleep(2)
+            await page.reload(wait_until='domcontentloaded', timeout=8000)
+            await asyncio.sleep(1)
 
             # 获取更新后的Cookie
             logger.info(f"【{self.cookie_id}】获取更新后的Cookie...")
@@ -4186,6 +4282,10 @@ class XianyuLive:
                         logger.info(f"【{self.cookie_id}】WebSocket连接建立成功！")
                         self.ws = websocket
 
+                        # 更新连接状态
+                        self.connection_failures = 0
+                        self.last_successful_connection = time.time()
+
                         logger.info(f"【{self.cookie_id}】开始初始化WebSocket连接...")
                         await self.init(websocket)
                         logger.info(f"【{self.cookie_id}】WebSocket初始化完成！")
@@ -4230,7 +4330,35 @@ class XianyuLive:
                                 continue
 
                 except Exception as e:
-                    logger.error(f"WebSocket连接异常: {self._safe_str(e)}")
+                    error_msg = self._safe_str(e)
+                    self.connection_failures += 1
+
+                    logger.error(f"WebSocket连接异常 ({self.connection_failures}/{self.max_connection_failures}): {error_msg}")
+
+                    # 检查是否超过最大失败次数
+                    if self.connection_failures >= self.max_connection_failures:
+                        logger.error(f"【{self.cookie_id}】连续连接失败{self.max_connection_failures}次，暂停重试30分钟")
+                        await asyncio.sleep(1800)  # 暂停30分钟
+                        self.connection_failures = 0  # 重置失败计数
+                        continue
+
+                    # 根据错误类型和失败次数决定处理策略
+                    if "no close frame received or sent" in error_msg:
+                        logger.info(f"【{self.cookie_id}】检测到WebSocket连接意外断开，准备重新连接...")
+                        retry_delay = min(3 * self.connection_failures, 15)  # 递增重试间隔，最大15秒
+                    elif "Connection refused" in error_msg or "timeout" in error_msg.lower():
+                        logger.warning(f"【{self.cookie_id}】网络连接问题，延长重试间隔...")
+                        retry_delay = min(10 * self.connection_failures, 60)  # 递增重试间隔，最大60秒
+                    else:
+                        logger.warning(f"【{self.cookie_id}】未知WebSocket错误，使用默认重试间隔...")
+                        retry_delay = min(5 * self.connection_failures, 30)  # 递增重试间隔，最大30秒
+
+                    # 清空当前token，确保重新连接时会重新获取
+                    if self.current_token:
+                        logger.info(f"【{self.cookie_id}】清空当前token，重新连接时将重新获取")
+                        self.current_token = None
+
+                    # 取消所有任务
                     if self.heartbeat_task:
                         self.heartbeat_task.cancel()
                     if self.token_refresh_task:
@@ -4239,9 +4367,16 @@ class XianyuLive:
                         self.cleanup_task.cancel()
                     if self.cookie_refresh_task:
                         self.cookie_refresh_task.cancel()
-                    await asyncio.sleep(5)  # 等待5秒后重试
+
+                    logger.info(f"【{self.cookie_id}】等待 {retry_delay} 秒后重试连接...")
+                    await asyncio.sleep(retry_delay)
                     continue
         finally:
+            # 清空当前token
+            if self.current_token:
+                logger.info(f"【{self.cookie_id}】程序退出，清空当前token")
+                self.current_token = None
+
             # 清理所有任务
             if self.heartbeat_task:
                 self.heartbeat_task.cancel()
