@@ -197,10 +197,12 @@ class XianyuLive:
 
         # Cookie刷新定时任务
         self.cookie_refresh_task = None
-        self.cookie_refresh_interval = 600  # 1小时 = 3600秒
+        self.cookie_refresh_interval = 1200  # 1小时 = 3600秒
         self.last_cookie_refresh_time = 0
         self.cookie_refresh_running = False  # 防止重复执行Cookie刷新
         self.cookie_refresh_enabled = True  # 是否启用Cookie刷新功能
+
+
 
         # WebSocket连接监控
         self.connection_failures = 0  # 连续连接失败次数
@@ -676,10 +678,13 @@ class XianyuLive:
         """刷新token"""
         try:
             logger.info(f"【{self.cookie_id}】开始刷新token...")
+            # 生成更精确的时间戳
+            timestamp = str(int(time.time() * 1000))
+
             params = {
                 'jsv': '2.7.2',
                 'appKey': '34839810',
-                't': str(int(time.time()) * 1000),
+                't': timestamp,
                 'sign': '',
                 'v': '1.0',
                 'type': 'originaljson',
@@ -688,7 +693,13 @@ class XianyuLive:
                 'timeout': '20000',
                 'api': 'mtop.taobao.idlemessage.pc.login.token',
                 'sessionOption': 'AutoLoginOnly',
+                'dangerouslySetWindvaneParams': '%5Bobject%20Object%5D',
+                'smToken': 'token',
+                'queryToken': 'sm',
+                'sm': 'sm',
                 'spm_cnt': 'a21ybx.im.0.0',
+                'spm_pre': 'a21ybx.home.sidebar.1.4c053da6vYwnmf',
+                'log_id': '4c053da6vYwnmf'
             }
             data_val = '{"appKey":"444e9908a51d1cb236a27862abc769c9","deviceId":"' + self.device_id + '"}'
             data = {
@@ -702,9 +713,25 @@ class XianyuLive:
             sign = generate_sign(params['t'], token, data_val)
             params['sign'] = sign
 
-            # 发送请求
-            headers = DEFAULT_HEADERS.copy()
-            headers['cookie'] = self.cookies_str
+            # 发送请求 - 使用与浏览器完全一致的请求头
+            headers = {
+                'accept': 'application/json',
+                'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'cache-control': 'no-cache',
+                'content-type': 'application/x-www-form-urlencoded',
+                'pragma': 'no-cache',
+                'priority': 'u=1, i',
+                'sec-ch-ua': '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-site',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+                'referer': 'https://www.goofish.com/',
+                'origin': 'https://www.goofish.com',
+                'cookie': self.cookies_str
+            }
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -3153,6 +3180,7 @@ class XianyuLive:
         if not self.current_token or (time.time() - self.last_token_refresh_time) >= self.token_refresh_interval:
             logger.info(f"【{self.cookie_id}】获取初始token...")
             token_refresh_attempted = True
+
             await self.refresh_token()
 
         if not self.current_token:
@@ -3319,6 +3347,8 @@ class XianyuLive:
 
     async def _execute_cookie_refresh(self, current_time):
         """独立执行Cookie刷新任务，避免阻塞主循环"""
+
+
         # 设置运行状态，防止重复执行
         self.cookie_refresh_running = True
 
@@ -3369,18 +3399,26 @@ class XianyuLive:
             # 清除运行状态
             self.cookie_refresh_running = False
 
+
+
     def enable_cookie_refresh(self, enabled: bool = True):
         """启用或禁用Cookie刷新功能"""
         self.cookie_refresh_enabled = enabled
         status = "启用" if enabled else "禁用"
         logger.info(f"【{self.cookie_id}】Cookie刷新功能已{status}")
 
-    def disable_cookie_refresh(self):
-        """禁用Cookie刷新功能"""
-        self.enable_cookie_refresh(False)
+
+
+
+
+
+
+
 
     async def _refresh_cookies_via_browser(self):
         """通过浏览器访问指定页面刷新Cookie"""
+
+
         playwright = None
         browser = None
         try:
@@ -3401,25 +3439,18 @@ class XianyuLive:
                 class DummyChildWatcher:
                     def __enter__(self):
                         return self
-
                     def __exit__(self, *args):
                         pass
-
                     def is_active(self):
                         return True
-
                     def add_child_handler(self, *args, **kwargs):
                         pass
-
                     def remove_child_handler(self, *args, **kwargs):
                         pass
-
                     def attach_loop(self, *args, **kwargs):
                         pass
-
                     def close(self):
                         pass
-
                     def __del__(self):
                         pass
 
@@ -3497,16 +3528,21 @@ class XianyuLive:
                     '--use-mock-keychain'
                 ])
 
+            # Cookie刷新模式使用无头浏览器
             browser = await playwright.chromium.launch(
                 headless=True,
                 args=browser_args
             )
 
             # 创建浏览器上下文
-            context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
-            )
+            context_options = {
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+            }
+
+            # 使用标准窗口大小
+            context_options['viewport'] = {'width': 1920, 'height': 1080}
+
+            context = await browser.new_context(**context_options)
 
             # 设置当前Cookie
             cookies = []
@@ -3526,28 +3562,66 @@ class XianyuLive:
             # 创建页面
             page = await context.new_page()
 
+            # 等待页面准备
+            await asyncio.sleep(0.1)
+
             # 访问指定页面
             target_url = "https://www.goofish.com/im?spm=a21ybx.home.sidebar.1.4c053da6vYwnmf"
             logger.info(f"【{self.cookie_id}】访问页面: {target_url}")
 
-            # 进一步缩短超时时间，减少对WebSocket的影响
-            await page.goto(target_url, wait_until='domcontentloaded', timeout=10000)
+            # 使用更灵活的页面访问策略
+            try:
+                # 首先尝试较短超时
+                await page.goto(target_url, wait_until='domcontentloaded', timeout=15000)
+                logger.info(f"【{self.cookie_id}】页面访问成功")
+            except Exception as e:
+                if 'timeout' in str(e).lower():
+                    logger.warning(f"【{self.cookie_id}】页面访问超时，尝试降级策略...")
+                    try:
+                        # 降级策略：只等待基本加载
+                        await page.goto(target_url, wait_until='load', timeout=20000)
+                        logger.info(f"【{self.cookie_id}】页面访问成功（降级策略）")
+                    except Exception as e2:
+                        logger.warning(f"【{self.cookie_id}】降级策略也失败，尝试最基本访问...")
+                        # 最后尝试：不等待任何加载完成
+                        await page.goto(target_url, timeout=25000)
+                        logger.info(f"【{self.cookie_id}】页面访问成功（最基本策略）")
+                else:
+                    raise e
 
-            # 最小化等待时间
-            logger.info(f"【{self.cookie_id}】页面加载完成，快速刷新...")
+            # Cookie刷新模式：执行两次刷新
+            logger.info(f"【{self.cookie_id}】页面加载完成，开始刷新...")
             await asyncio.sleep(1)
 
-            # 第一次刷新 - 缩短超时时间
+            # 第一次刷新 - 带重试机制
             logger.info(f"【{self.cookie_id}】执行第一次刷新...")
-            await page.reload(wait_until='domcontentloaded', timeout=8000)
+            try:
+                await page.reload(wait_until='domcontentloaded', timeout=12000)
+                logger.info(f"【{self.cookie_id}】第一次刷新成功")
+            except Exception as e:
+                if 'timeout' in str(e).lower():
+                    logger.warning(f"【{self.cookie_id}】第一次刷新超时，使用降级策略...")
+                    await page.reload(wait_until='load', timeout=15000)
+                    logger.info(f"【{self.cookie_id}】第一次刷新成功（降级策略）")
+                else:
+                    raise e
             await asyncio.sleep(1)
 
-            # 第二次刷新 - 缩短超时时间
+            # 第二次刷新 - 带重试机制
             logger.info(f"【{self.cookie_id}】执行第二次刷新...")
-            await page.reload(wait_until='domcontentloaded', timeout=8000)
+            try:
+                await page.reload(wait_until='domcontentloaded', timeout=12000)
+                logger.info(f"【{self.cookie_id}】第二次刷新成功")
+            except Exception as e:
+                if 'timeout' in str(e).lower():
+                    logger.warning(f"【{self.cookie_id}】第二次刷新超时，使用降级策略...")
+                    await page.reload(wait_until='load', timeout=15000)
+                    logger.info(f"【{self.cookie_id}】第二次刷新成功（降级策略）")
+                else:
+                    raise e
             await asyncio.sleep(1)
 
-            # 获取更新后的Cookie
+            # Cookie刷新模式：正常更新Cookie
             logger.info(f"【{self.cookie_id}】获取更新后的Cookie...")
             updated_cookies = await context.cookies()
 
