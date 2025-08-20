@@ -1189,7 +1189,7 @@ class DBManager:
                         'user_id': result[2],
                         'auto_confirm': bool(result[3]),
                         'remark': result[4] or '',
-                        'pause_duration': result[5] or 10,
+                        'pause_duration': result[5] if result[5] is not None else 10,
                         'created_at': result[6]
                     }
                 return None
@@ -1244,11 +1244,19 @@ class DBManager:
                 self._execute_sql(cursor, "SELECT pause_duration FROM cookies WHERE id = ?", (cookie_id,))
                 result = cursor.fetchone()
                 if result:
-                    return result[0] or 10  # 默认10分钟
-                return 10  # 如果没有找到记录，返回默认值
+                    if result[0] is None:
+                        logger.warning(f"账号 {cookie_id} 的pause_duration为NULL，使用默认值10分钟并修复数据库")
+                        # 修复数据库中的NULL值
+                        self._execute_sql(cursor, "UPDATE cookies SET pause_duration = 10 WHERE id = ?", (cookie_id,))
+                        self.conn.commit()
+                        return 10
+                    return result[0]  # 返回实际值，不使用or操作符
+                else:
+                    logger.warning(f"账号 {cookie_id} 未找到记录，使用默认值10分钟")
+                    return 10
             except Exception as e:
                 logger.error(f"获取账号自动回复暂停时间失败: {e}")
-                return 10  # 出错时返回默认值
+                return 10
 
     def get_auto_confirm(self, cookie_id: str) -> bool:
         """获取Cookie的自动确认发货设置"""
