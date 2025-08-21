@@ -1065,6 +1065,40 @@
               </div>
 
               <div class="col-sm-6 col-md-4 col-lg-3 col-xl-2">
+                <div class="card h-100 channel-type-card" onclick="showAddChannelModal('feishu')">
+                  <div class="card-body text-center">
+                    <div class="channel-icon">
+                      <i class="bi bi-chat-square-text-fill text-warning"></i>
+                    </div>
+                    <h6 class="card-title">飞书通知</h6>
+                    <p class="card-text text-muted">飞书机器人消息</p>
+                    <div class="mt-auto">
+                      <button class="btn btn-outline-warning btn-sm">
+                        <i class="bi bi-plus-circle me-1"></i>配置
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-sm-6 col-md-4 col-lg-3 col-xl-2">
+                <div class="card h-100 channel-type-card" onclick="showAddChannelModal('bark')">
+                  <div class="card-body text-center">
+                    <div class="channel-icon">
+                      <i class="bi bi-phone-fill text-dark"></i>
+                    </div>
+                    <h6 class="card-title">Bark通知</h6>
+                    <p class="card-text text-muted">iOS推送通知</p>
+                    <div class="mt-auto">
+                      <button class="btn btn-outline-dark btn-sm">
+                        <i class="bi bi-plus-circle me-1"></i>配置
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-sm-6 col-md-4 col-lg-3 col-xl-2">
                 <div class="card h-100 channel-type-card" onclick="showAddChannelModal('email')">
                   <div class="card-body text-center">
                     <div class="channel-icon">
@@ -2720,7 +2754,7 @@
 
   <!-- JS依赖 -->
   <script src="/static/lib/bootstrap/bootstrap.bundle.min.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/app.js?v=2.2.0"></script>
 
   <!-- 默认回复管理模态框 -->
   <div class="modal fade" id="defaultReplyModal" tabindex="-1" aria-labelledby="defaultReplyModalLabel" aria-hidden="true">

@@ -2450,6 +2450,78 @@ const channelTypeConfigs = {
         }
     ]
     },
+    feishu: {
+    title: '飞书通知',
+    description: '请设置飞书机器人Webhook URL，支持自定义机器人和群机器人',
+    icon: 'bi-chat-square-text-fill',
+    color: 'warning',
+    fields: [
+        {
+        id: 'webhook_url',
+        label: '飞书机器人Webhook URL',
+        type: 'url',
+        placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
+        required: true,
+        help: '飞书机器人的Webhook地址'
+        },
+        {
+        id: 'secret',
+        label: '签名密钥（可选）',
+        type: 'text',
+        placeholder: '输入签名密钥',
+        required: false,
+        help: '如果机器人开启了签名验证，请填写密钥'
+        }
+    ]
+    },
+    bark: {
+    title: 'Bark通知',
+    description: 'iOS推送通知服务，支持自建服务器和官方服务器',
+    icon: 'bi-phone-fill',
+    color: 'dark',
+    fields: [
+        {
+        id: 'device_key',
+        label: '设备密钥',
+        type: 'text',
+        placeholder: '输入Bark设备密钥',
+        required: true,
+        help: 'Bark应用中显示的设备密钥'
+        },
+        {
+        id: 'server_url',
+        label: '服务器地址（可选）',
+        type: 'url',
+        placeholder: 'https://api.day.app',
+        required: false,
+        help: '自建Bark服务器地址，留空使用官方服务器'
+        },
+        {
+        id: 'title',
+        label: '通知标题（可选）',
+        type: 'text',
+        placeholder: '闲鱼自动回复通知',
+        required: false,
+        help: '推送通知的标题'
+        },
+        {
+        id: 'sound',
+        label: '提示音（可选）',
+        type: 'text',
+        placeholder: 'default',
+        required: false,
+        help: '通知提示音，如：alarm, anticipate, bell等'
+        },
+        {
+        id: 'group',
+        label: '分组（可选）',
+        type: 'text',
+        placeholder: 'xianyu',
+        required: false,
+        help: '通知分组名称，用于归类消息'
+        }
+    ]
+    },
     email: {
     title: '邮件通知',
     description: '通过SMTP服务器发送邮件通知，支持各种邮箱服务商',
@@ -2753,6 +2825,8 @@ function renderNotificationChannels(channels) {
     let channelType = channel.type;
     if (channelType === 'ding_talk') {
         channelType = 'dingtalk';  // 兼容旧的类型名
+    } else if (channelType === 'lark') {
+        channelType = 'feishu';  // 兼容lark类型名
     }
     const typeConfig = channelTypeConfigs[channelType];
     const typeDisplay = typeConfig ? typeConfig.title : channel.type;
@@ -2867,6 +2941,8 @@ async function editNotificationChannel(channelId) {
     let channelType = channel.type;
     if (channelType === 'ding_talk') {
         channelType = 'dingtalk';  // 兼容旧的类型名
+    } else if (channelType === 'lark') {
+        channelType = 'feishu';  // 兼容lark类型名
     }
 
     const config = channelTypeConfigs[channelType];
@@ -2891,6 +2967,10 @@ async function editNotificationChannel(channelId) {
         configData = { qq_number: channel.config };
         } else if (channel.type === 'dingtalk' || channel.type === 'ding_talk') {
         configData = { webhook_url: channel.config };
+        } else if (channel.type === 'feishu' || channel.type === 'lark') {
+        configData = { webhook_url: channel.config };
+        } else if (channel.type === 'bark') {
+        configData = { device_key: channel.config };
         } else {
         configData = { config: channel.config };
         }

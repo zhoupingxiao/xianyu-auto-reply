@@ -1863,6 +1863,12 @@ class XianyuLive:
                         case 'ding_talk' | 'dingtalk':
                             logger.info(f"📱 开始发送钉钉通知...")
                             await self._send_dingtalk_notification(config_data, notification_msg)
+                        case 'feishu' | 'lark':
+                            logger.info(f"📱 开始发送飞书通知...")
+                            await self._send_feishu_notification(config_data, notification_msg)
+                        case 'bark':
+                            logger.info(f"📱 开始发送Bark通知...")
+                            await self._send_bark_notification(config_data, notification_msg)
                         case 'email':
                             logger.info(f"📱 开始发送邮件通知...")
                             await self._send_email_notification(config_data, notification_msg)
@@ -1988,6 +1994,159 @@ class XianyuLive:
 
         except Exception as e:
             logger.error(f"发送钉钉通知异常: {self._safe_str(e)}")
+
+    async def _send_feishu_notification(self, config_data: dict, message: str):
+        """发送飞书通知"""
+        try:
+            import aiohttp
+            import json
+            import hmac
+            import hashlib
+            import base64
+
+            logger.info(f"📱 飞书通知 - 开始处理配置数据: {config_data}")
+
+            # 解析配置
+            webhook_url = config_data.get('webhook_url', '')
+            secret = config_data.get('secret', '')
+
+            logger.info(f"📱 飞书通知 - Webhook URL: {webhook_url[:50]}...")
+            logger.info(f"📱 飞书通知 - 是否有签名密钥: {'是' if secret else '否'}")
+
+            if not webhook_url:
+                logger.warning("📱 飞书通知 - Webhook URL配置为空，无法发送通知")
+                return
+
+            # 如果有加签密钥，生成签名
+            timestamp = str(int(time.time()))
+            sign = ""
+
+            if secret:
+                string_to_sign = f'{timestamp}\n{secret}'
+                hmac_code = hmac.new(
+                    secret.encode('utf-8'),
+                    string_to_sign.encode('utf-8'),
+                    digestmod=hashlib.sha256
+                ).digest()
+                sign = base64.b64encode(hmac_code).decode('utf-8')
+                logger.info(f"📱 飞书通知 - 已生成签名")
+
+            # 构建请求数据
+            data = {
+                "msg_type": "text",
+                "content": {
+                    "text": message
+                },
+                "timestamp": timestamp
+            }
+
+            # 如果有签名，添加到请求数据中
+            if sign:
+                data["sign"] = sign
+
+            logger.info(f"📱 飞书通知 - 请求数据构建完成")
+
+            # 发送POST请求
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=data, timeout=10) as response:
+                    response_text = await response.text()
+                    logger.info(f"📱 飞书通知 - 响应状态: {response.status}")
+                    logger.info(f"📱 飞书通知 - 响应内容: {response_text}")
+
+                    if response.status == 200:
+                        try:
+                            response_json = json.loads(response_text)
+                            if response_json.get('code') == 0:
+                                logger.info(f"📱 飞书通知发送成功")
+                            else:
+                                logger.warning(f"📱 飞书通知发送失败: {response_json.get('msg', '未知错误')}")
+                        except json.JSONDecodeError:
+                            logger.info(f"📱 飞书通知发送成功（响应格式异常）")
+                    else:
+                        logger.warning(f"📱 飞书通知发送失败: HTTP {response.status}, 响应: {response_text}")
+
+        except Exception as e:
+            logger.error(f"📱 发送飞书通知异常: {self._safe_str(e)}")
+            import traceback
+            logger.error(f"📱 飞书通知异常详情: {traceback.format_exc()}")
+
+    async def _send_bark_notification(self, config_data: dict, message: str):
+        """发送Bark通知"""
+        try:
+            import aiohttp
+            import json
+            from urllib.parse import quote
+
+            logger.info(f"📱 Bark通知 - 开始处理配置数据: {config_data}")
+
+            # 解析配置
+            server_url = config_data.get('server_url', 'https://api.day.app').rstrip('/')
+            device_key = config_data.get('device_key', '')
+            title = config_data.get('title', '闲鱼自动回复通知')
+            sound = config_data.get('sound', 'default')
+            icon = config_data.get('icon', '')
+            group = config_data.get('group', 'xianyu')
+            url = config_data.get('url', '')
+
+            logger.info(f"📱 Bark通知 - 服务器: {server_url}")
+            logger.info(f"📱 Bark通知 - 设备密钥: {device_key[:10]}..." if device_key else "📱 Bark通知 - 设备密钥: 未设置")
+            logger.info(f"📱 Bark通知 - 标题: {title}")
+
+            if not device_key:
+                logger.warning("📱 Bark通知 - 设备密钥配置为空，无法发送通知")
+                return
+
+            # 构建请求URL和数据
+            # Bark支持两种方式：URL路径方式和POST JSON方式
+            # 这里使用POST JSON方式，更灵活且支持更多参数
+
+            api_url = f"{server_url}/push"
+
+            # 构建请求数据
+            data = {
+                "device_key": device_key,
+                "title": title,
+                "body": message,
+                "sound": sound,
+                "group": group
+            }
+
+            # 可选参数
+            if icon:
+                data["icon"] = icon
+            if url:
+                data["url"] = url
+
+            logger.info(f"📱 Bark通知 - API地址: {api_url}")
+            logger.info(f"📱 Bark通知 - 请求数据构建完成")
+
+            # 发送POST请求
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, json=data, timeout=10) as response:
+                    response_text = await response.text()
+                    logger.info(f"📱 Bark通知 - 响应状态: {response.status}")
+                    logger.info(f"📱 Bark通知 - 响应内容: {response_text}")
+
+                    if response.status == 200:
+                        try:
+                            response_json = json.loads(response_text)
+                            if response_json.get('code') == 200:
+                                logger.info(f"📱 Bark通知发送成功")
+                            else:
+                                logger.warning(f"📱 Bark通知发送失败: {response_json.get('message', '未知错误')}")
+                        except json.JSONDecodeError:
+                            # 某些Bark服务器可能返回纯文本
+                            if 'success' in response_text.lower() or 'ok' in response_text.lower():
+                                logger.info(f"📱 Bark通知发送成功")
+                            else:
+                                logger.warning(f"📱 Bark通知响应格式异常: {response_text}")
+                    else:
+                        logger.warning(f"📱 Bark通知发送失败: HTTP {response.status}, 响应: {response_text}")
+
+        except Exception as e:
+            logger.error(f"📱 发送Bark通知异常: {self._safe_str(e)}")
+            import traceback
+            logger.error(f"📱 Bark通知异常详情: {traceback.format_exc()}")
 
     async def _send_email_notification(self, config_data: dict, message: str):
         """发送邮件通知"""
@@ -2217,6 +2376,12 @@ class XianyuLive:
                             notification_sent = True
                         case 'ding_talk' | 'dingtalk':
                             await self._send_dingtalk_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case 'feishu' | 'lark':
+                            await self._send_feishu_notification(config_data, notification_msg)
+                            notification_sent = True
+                        case 'bark':
+                            await self._send_bark_notification(config_data, notification_msg)
                             notification_sent = True
                         case 'email':
                             await self._send_email_notification(config_data, notification_msg)
