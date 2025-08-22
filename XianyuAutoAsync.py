@@ -1819,6 +1819,16 @@ class XianyuLive:
             from db_manager import db_manager
             import aiohttp
 
+            # 过滤系统默认消息，不发送通知
+            system_messages = [
+                '发来一条消息',
+                '发来一条新消息'
+            ]
+
+            if send_message in system_messages:
+                logger.debug(f"📱 系统消息不发送通知: {send_message}")
+                return
+
             logger.info(f"📱 开始发送消息通知 - 账号: {self.cookie_id}, 买家: {send_user_name}")
 
             # 获取当前账号的通知配置
@@ -3426,12 +3436,6 @@ class XianyuLive:
                 await self.send_heartbeat(ws)
                 consecutive_failures = 0  # 重置失败计数
 
-                # 检查心跳响应超时
-                current_time = time.time()
-                if (self.last_heartbeat_response > 0 and
-                    current_time - self.last_heartbeat_response > self.heartbeat_timeout):
-                    logger.warning(f"【{self.cookie_id}】心跳响应超时，可能存在连接问题")
-
                 await asyncio.sleep(self.heartbeat_interval)
 
             except Exception as e:
@@ -3547,7 +3551,6 @@ class XianyuLive:
                 self.last_cookie_refresh_time = current_time
 
         except asyncio.TimeoutError:
-            logger.error(f"【{self.cookie_id}】Cookie刷新任务超时（3分钟）")
             # 超时也要更新时间，避免频繁重试
             self.last_cookie_refresh_time = current_time
         except Exception as e:
@@ -3558,7 +3561,7 @@ class XianyuLive:
             # 确保心跳任务恢复（如果WebSocket仍然连接）
             if (self.ws and not self.ws.closed and
                 (not self.heartbeat_task or self.heartbeat_task.done())):
-                logger.info(f"【{self.cookie_id}】Cookie刷新完成，确保心跳任务正常运行")
+                logger.info(f"【{self.cookie_id}】Cookie刷新完成，心跳任务正常运行")
                 self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(self.ws))
 
             # 清除运行状态
@@ -3571,14 +3574,6 @@ class XianyuLive:
         self.cookie_refresh_enabled = enabled
         status = "启用" if enabled else "禁用"
         logger.info(f"【{self.cookie_id}】Cookie刷新功能已{status}")
-
-
-
-
-
-
-
-
 
     async def _refresh_cookies_via_browser(self):
         """通过浏览器访问指定页面刷新Cookie"""
@@ -4597,15 +4592,19 @@ class XianyuLive:
                         logger.info(f"【{self.cookie_id}】清空当前token，重新连接时将重新获取")
                         self.current_token = None
 
-                    # 取消所有任务
+                    # 取消所有任务并重置为None
                     if self.heartbeat_task:
                         self.heartbeat_task.cancel()
+                        self.heartbeat_task = None
                     if self.token_refresh_task:
                         self.token_refresh_task.cancel()
+                        self.token_refresh_task = None
                     if self.cleanup_task:
                         self.cleanup_task.cancel()
+                        self.cleanup_task = None
                     if self.cookie_refresh_task:
                         self.cookie_refresh_task.cancel()
+                        self.cookie_refresh_task = None
 
                     logger.info(f"【{self.cookie_id}】等待 {retry_delay} 秒后重试连接...")
                     await asyncio.sleep(retry_delay)
