@@ -354,7 +354,7 @@ class DBManager:
             CREATE TABLE IF NOT EXISTS notification_channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                type TEXT NOT NULL CHECK (type IN ('qq')),
+                type TEXT NOT NULL CHECK (type IN ('qq','ding_talk','dingtalk','feishu','lark','bark','email','webhook','wechat','telegram')),
                 config TEXT NOT NULL,
                 enabled BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -566,6 +566,14 @@ class DBManager:
                 self.upgrade_keywords_table_for_image_support(cursor)
                 self.set_system_setting("db_version", "1.3", "数据库版本号")
                 logger.info("数据库升级到版本1.3完成")
+            
+            
+            # 升级到版本1.4 - 添加关键词类型和图片URL字段
+            if current_version < "1.4":
+                logger.info("开始升级数据库到版本1.4...")
+                self.upgrade_notification_channels_types(cursor)
+                self.set_system_setting("db_version", "1.4", "数据库版本号")
+                logger.info("数据库升级到版本1.4完成")
 
             # 迁移遗留数据（在所有版本升级完成后执行）
             self.migrate_legacy_data(cursor)
@@ -802,13 +810,13 @@ class DBManager:
                 existing_data = cursor.fetchall()
                 logger.info(f"备份 {count} 条通知渠道数据")
 
-            # 创建新表，支持更多渠道类型
+            # 创建新表，支持所有通知渠道类型
             cursor.execute('''
             CREATE TABLE notification_channels_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
-                type TEXT NOT NULL CHECK (type IN ('qq','ding_talk','dingtalk','email','webhook','wechat','telegram')),
+                type TEXT NOT NULL CHECK (type IN ('qq','ding_talk','dingtalk','feishu','lark','bark','email','webhook','wechat','telegram')),
                 config TEXT NOT NULL,
                 enabled BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -823,15 +831,18 @@ class DBManager:
                     # 处理类型映射，支持更多渠道类型
                     old_type = row[3] if len(row) > 3 else 'qq'  # type字段
 
-                    # 扩展的类型映射规则
+                    # 完整的类型映射规则，支持所有通知渠道
                     type_mapping = {
                         'ding_talk': 'dingtalk',  # 统一为dingtalk
                         'dingtalk': 'dingtalk',
                         'qq': 'qq',
-                        'email': 'email',  # 现在支持email
-                        'webhook': 'webhook',  # 现在支持webhook
-                        'wechat': 'wechat',  # 现在支持wechat
-                        'telegram': 'telegram'  # 现在支持telegram
+                        'feishu': 'feishu',      # 飞书通知
+                        'lark': 'lark',          # 飞书通知（英文名）
+                        'bark': 'bark',          # Bark通知
+                        'email': 'email',        # 邮件通知
+                        'webhook': 'webhook',    # Webhook通知
+                        'wechat': 'wechat',      # 微信通知
+                        'telegram': 'telegram'   # Telegram通知
                     }
 
                     new_type = type_mapping.get(old_type, 'qq')  # 默认为qq
@@ -862,6 +873,15 @@ class DBManager:
             cursor.execute("ALTER TABLE notification_channels_new RENAME TO notification_channels")
 
             logger.info("notification_channels表类型升级完成")
+            logger.info("✅ 现在支持以下所有通知渠道类型:")
+            logger.info("   - qq (QQ通知)")
+            logger.info("   - ding_talk/dingtalk (钉钉通知)")
+            logger.info("   - feishu/lark (飞书通知)")
+            logger.info("   - bark (Bark通知)")
+            logger.info("   - email (邮件通知)")
+            logger.info("   - webhook (Webhook通知)")
+            logger.info("   - wechat (微信通知)")
+            logger.info("   - telegram (Telegram通知)")
             return True
         except Exception as e:
             logger.error(f"升级notification_channels表类型失败: {e}")
