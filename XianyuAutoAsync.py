@@ -654,18 +654,18 @@ class XianyuLive:
 
                         # 发送成功通知
                         if len(delivery_contents) > 1:
-                            await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, f"多数量发货成功，共发送 {len(delivery_contents)} 个卡券")
+                            await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, f"多数量发货成功，共发送 {len(delivery_contents)} 个卡券", chat_id)
                         else:
-                            await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "发货成功")
+                            await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "发货成功", chat_id)
                     else:
                         logger.warning(f'[{msg_time}] 【自动发货】未找到匹配的发货规则或获取发货内容失败')
                         # 发送自动发货失败通知
-                        await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "未找到匹配的发货规则或获取发货内容失败")
+                        await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, "未找到匹配的发货规则或获取发货内容失败", chat_id)
 
                 except Exception as e:
                     logger.error(f"自动发货处理异常: {self._safe_str(e)}")
                     # 发送自动发货异常通知
-                    await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, f"自动发货处理异常: {str(e)}")
+                    await self.send_delivery_failure_notification(send_user_name, send_user_id, item_id, f"自动发货处理异常: {str(e)}", chat_id)
 
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】订单锁释放: {lock_key}，自动发货处理完成')
 
@@ -1813,7 +1813,7 @@ class XianyuLive:
         except:
             return 0.0
 
-    async def send_notification(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str = None):
+    async def send_notification(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str = None, chat_id: str = None):
         """发送消息通知"""
         try:
             from db_manager import db_manager
@@ -1845,6 +1845,7 @@ class XianyuLive:
                              f"账号: {self.cookie_id}\n" \
                              f"买家: {send_user_name} (ID: {send_user_id})\n" \
                              f"商品ID: {item_id or '未知'}\n" \
+                             f"聊天ID: {chat_id or '未知'}\n" \
                              f"消息内容: {send_message}\n" \
                              f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
@@ -2310,7 +2311,7 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"发送Telegram通知异常: {self._safe_str(e)}")
 
-    async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh"):
+    async def send_token_refresh_notification(self, error_message: str, notification_type: str = "token_refresh", chat_id: str = None):
         """发送Token刷新异常通知（带防重复机制）"""
         try:
             # 检查是否是正常的令牌过期，这种情况不需要发送通知
@@ -2360,6 +2361,7 @@ class XianyuLive:
             notification_msg = f"""🔴 闲鱼账号Token刷新异常
 
 账号ID: {self.cookie_id}
+聊天ID: {chat_id or '未知'}
 异常时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
 异常信息: {error_message}
 
@@ -2501,7 +2503,7 @@ class XianyuLive:
 
         return False
 
-    async def send_delivery_failure_notification(self, send_user_name: str, send_user_id: str, item_id: str, error_message: str):
+    async def send_delivery_failure_notification(self, send_user_name: str, send_user_id: str, item_id: str, error_message: str, chat_id: str = None):
         """发送自动发货失败通知"""
         try:
             from db_manager import db_manager
@@ -2518,6 +2520,7 @@ class XianyuLive:
                                  f"账号: {self.cookie_id}\n" \
                                  f"买家: {send_user_name} (ID: {send_user_id})\n" \
                                  f"商品ID: {item_id}\n" \
+                                 f"聊天ID: {chat_id or '未知'}\n" \
                                  f"结果: {error_message}\n" \
                                  f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n" \
                                  f"请及时处理！"
@@ -4291,7 +4294,7 @@ class XianyuLive:
 
                 # 🔔 立即发送消息通知（独立于自动回复功能）
                 try:
-                    await self.send_notification(send_user_name, send_user_id, send_message, item_id)
+                    await self.send_notification(send_user_name, send_user_id, send_message, item_id, chat_id)
                 except Exception as notify_error:
                     logger.error(f"📱 发送消息通知失败: {self._safe_str(notify_error)}")
 
