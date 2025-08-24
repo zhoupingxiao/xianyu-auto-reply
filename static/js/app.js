@@ -1347,6 +1347,157 @@ function copyCookie(id, value) {
     });
 }
 
+// 刷新真实Cookie
+async function refreshRealCookie(cookieId) {
+    if (!cookieId) {
+        showToast('缺少账号ID', 'warning');
+        return;
+    }
+
+    // 获取当前cookie值
+    try {
+        const cookieDetails = await fetchJSON(`${apiBase}/cookies/details`);
+        const currentCookie = cookieDetails.find(c => c.id === cookieId);
+
+        if (!currentCookie || !currentCookie.value) {
+            showToast('未找到有效的Cookie信息', 'warning');
+            return;
+        }
+
+        // 确认操作
+        if (!confirm(`确定要刷新账号 "${cookieId}" 的真实Cookie吗？\n\n此操作将使用当前Cookie访问闲鱼IM界面获取最新的真实Cookie。`)) {
+            return;
+        }
+
+        // 显示加载状态
+        const button = event.target.closest('button');
+        const originalContent = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i>';
+
+        // 调用刷新API
+        const response = await fetch(`${apiBase}/qr-login/refresh-cookies`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                qr_cookies: currentCookie.value,
+                cookie_id: cookieId
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showToast(`账号 "${cookieId}" 真实Cookie刷新成功`, 'success');
+            // 刷新账号列表以显示更新后的cookie
+            loadCookies();
+        } else {
+            showToast(`真实Cookie刷新失败: ${result.message}`, 'danger');
+        }
+
+    } catch (error) {
+        console.error('刷新真实Cookie失败:', error);
+        showToast(`刷新真实Cookie失败: ${error.message || '未知错误'}`, 'danger');
+    } finally {
+        // 恢复按钮状态
+        const button = event.target.closest('button');
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+        }
+    }
+}
+
+// 显示冷却状态
+async function showCooldownStatus(cookieId) {
+    if (!cookieId) {
+        showToast('缺少账号ID', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${apiBase}/qr-login/cooldown-status/${cookieId}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            const { remaining_time, cooldown_duration, is_in_cooldown, remaining_minutes, remaining_seconds } = result;
+
+            let statusMessage = `账号: ${cookieId}\n`;
+            statusMessage += `冷却时长: ${cooldown_duration / 60}分钟\n`;
+
+            if (is_in_cooldown) {
+                statusMessage += `冷却状态: 进行中\n`;
+                statusMessage += `剩余时间: ${remaining_minutes}分${remaining_seconds}秒\n\n`;
+                statusMessage += `在冷却期间，_refresh_cookies_via_browser 方法将被跳过。\n\n`;
+                statusMessage += `是否要重置冷却时间？`;
+
+                if (confirm(statusMessage)) {
+                    await resetCooldownTime(cookieId);
+                }
+            } else {
+                statusMessage += `冷却状态: 无冷却\n`;
+                statusMessage += `可以正常执行 _refresh_cookies_via_browser 方法`;
+                alert(statusMessage);
+            }
+        } else {
+            showToast(`获取冷却状态失败: ${result.message}`, 'danger');
+        }
+
+    } catch (error) {
+        console.error('获取冷却状态失败:', error);
+        showToast(`获取冷却状态失败: ${error.message || '未知错误'}`, 'danger');
+    }
+}
+
+// 重置冷却时间
+async function resetCooldownTime(cookieId) {
+    if (!cookieId) {
+        showToast('缺少账号ID', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${apiBase}/qr-login/reset-cooldown/${cookieId}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            const previousTime = result.previous_remaining_time || 0;
+            const previousMinutes = Math.floor(previousTime / 60);
+            const previousSeconds = previousTime % 60;
+
+            let message = `账号 "${cookieId}" 的扫码登录冷却时间已重置`;
+            if (previousTime > 0) {
+                message += `\n原剩余时间: ${previousMinutes}分${previousSeconds}秒`;
+            }
+
+            showToast(message, 'success');
+        } else {
+            showToast(`重置冷却时间失败: ${result.message}`, 'danger');
+        }
+
+    } catch (error) {
+        console.error('重置冷却时间失败:', error);
+        showToast(`重置冷却时间失败: ${error.message || '未知错误'}`, 'danger');
+    }
+}
+
 // 删除Cookie
 async function delCookie(id) {
     if (!confirm(`确定要删除账号 "${id}" 吗？此操作不可恢复。`)) return;
@@ -7015,6 +7166,16 @@ async function checkQRCodeStatus() {
             clearQRCodeCheck();
             showVerificationRequired(data);
             break;
+        case 'processing':
+            document.getElementById('statusText').textContent = '正在处理中...';
+            // 继续轮询，不清理检查
+            break;
+        case 'already_processed':
+            document.getElementById('statusText').textContent = '登录已完成';
+            document.getElementById('statusSpinner').style.display = 'none';
+            clearQRCodeCheck();
+            showToast('该扫码会话已处理完成', 'info');
+            break;
         }
     }
     } catch (error) {
@@ -7078,12 +7239,37 @@ function showVerificationRequired(data) {
 // 处理扫码成功
 function handleQRCodeSuccess(data) {
     if (data.account_info) {
-    const { account_id, is_new_account } = data.account_info;
+    const { account_id, is_new_account, real_cookie_refreshed, fallback_reason, cookie_length } = data.account_info;
 
+    // 构建成功消息
+    let successMessage = '';
     if (is_new_account) {
-        showToast(`新账号添加成功！账号ID: ${account_id}`, 'success');
+        successMessage = `新账号添加成功！账号ID: ${account_id}`;
     } else {
-        showToast(`账号Cookie已更新！账号ID: ${account_id}`, 'success');
+        successMessage = `账号Cookie已更新！账号ID: ${account_id}`;
+    }
+
+    // 添加cookie长度信息
+    if (cookie_length) {
+        successMessage += `\nCookie长度: ${cookie_length}`;
+    }
+
+    // 添加真实cookie获取状态信息
+    if (real_cookie_refreshed === true) {
+        successMessage += '\n✅ 真实Cookie获取并保存成功';
+        document.getElementById('statusText').textContent = '登录成功！真实Cookie已获取并保存';
+        showToast(successMessage, 'success');
+    } else if (real_cookie_refreshed === false) {
+        successMessage += '\n⚠️ 真实Cookie获取失败，已保存原始扫码Cookie';
+        if (fallback_reason) {
+            successMessage += `\n原因: ${fallback_reason}`;
+        }
+        document.getElementById('statusText').textContent = '登录成功，但使用原始Cookie';
+        showToast(successMessage, 'warning');
+    } else {
+        // 兼容旧版本，没有真实cookie刷新信息
+        document.getElementById('statusText').textContent = '登录成功！';
+        showToast(successMessage, 'success');
     }
 
     // 关闭模态框
@@ -7093,7 +7279,7 @@ function handleQRCodeSuccess(data) {
 
         // 刷新账号列表
         loadCookies();
-    }, 2000);
+    }, 3000); // 延长显示时间以便用户看到详细信息
     }
 }
 
