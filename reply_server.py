@@ -848,6 +848,107 @@ async def register(request: RegisterRequest):
         )
 
 
+# ------------------------- 发送消息接口 -------------------------
+
+# 固定的API秘钥（生产环境中应该从配置文件或环境变量读取）
+API_SECRET_KEY = "xianyu_api_secret_2024"
+
+class SendMessageRequest(BaseModel):
+    api_key: str
+    cookie_id: str
+    chat_id: str
+    to_user_id: str
+    message: str
+
+
+class SendMessageResponse(BaseModel):
+    success: bool
+    message: str
+
+
+def verify_api_key(api_key: str) -> bool:
+    """验证API秘钥"""
+    return api_key == API_SECRET_KEY
+
+
+@app.post('/send-message', response_model=SendMessageResponse)
+async def send_message_api(request: SendMessageRequest):
+    """发送消息API接口（使用秘钥验证）"""
+    try:
+        # 验证API秘钥
+        if not verify_api_key(request.api_key):
+            logger.warning(f"API秘钥验证失败: {request.api_key}")
+            return SendMessageResponse(
+                success=False,
+                message="API秘钥验证失败"
+            )
+
+        # 检查cookie_manager是否可用
+        if not cookie_manager.manager:
+            logger.error("CookieManager未初始化")
+            return SendMessageResponse(
+                success=False,
+                message="系统未就绪，请稍后重试"
+            )
+
+        # 检查Cookie是否存在
+        if request.cookie_id not in cookie_manager.manager.cookies:
+            logger.warning(f"Cookie不存在: {request.cookie_id}")
+            return SendMessageResponse(
+                success=False,
+                message="指定的Cookie账号不存在"
+            )
+
+        # 检查账号是否启用
+        if not cookie_manager.manager.get_cookie_status(request.cookie_id):
+            logger.warning(f"尝试使用已禁用的账号发送消息: {request.cookie_id}")
+            return SendMessageResponse(
+                success=False,
+                message="该账号已被禁用，无法发送消息"
+            )
+
+        # 获取XianyuLive实例
+        from XianyuAutoAsync import XianyuLive
+        live_instance = XianyuLive.get_instance(request.cookie_id)
+
+        if not live_instance:
+            logger.warning(f"账号实例不存在或未连接: {request.cookie_id}")
+            return SendMessageResponse(
+                success=False,
+                message="账号实例不存在或未连接，请检查账号状态"
+            )
+
+        # 检查WebSocket连接状态
+        if not live_instance.ws or live_instance.ws.closed:
+            logger.warning(f"账号WebSocket连接已断开: {request.cookie_id}")
+            return SendMessageResponse(
+                success=False,
+                message="账号WebSocket连接已断开，请等待重连"
+            )
+
+        # 发送消息
+        await live_instance.send_msg(
+            live_instance.ws,
+            request.chat_id,
+            request.to_user_id,
+            request.message
+        )
+
+        logger.info(f"API成功发送消息: {request.cookie_id} -> {request.to_user_id}, 内容: {request.message[:50]}{'...' if len(request.message) > 50 else ''}")
+
+        return SendMessageResponse(
+            success=True,
+            message="消息发送成功"
+        )
+
+    except Exception as e:
+        logger.error(f"API发送消息异常: {request.cookie_id} -> {request.to_user_id}, 错误: {str(e)}")
+        return SendMessageResponse(
+            success=False,
+            message=f"发送消息失败: {str(e)}"
+        )
+
+
 @app.post("/xianyu/reply", response_model=ResponseModel)
 async def xianyu_reply(req: RequestModel):
     msg_template = match_reply(req.cookie_id, req.send_message)
