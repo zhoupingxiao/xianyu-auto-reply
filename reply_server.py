@@ -851,7 +851,8 @@ async def register(request: RegisterRequest):
 # ------------------------- 发送消息接口 -------------------------
 
 # 固定的API秘钥（生产环境中应该从配置文件或环境变量读取）
-API_SECRET_KEY = "xianyu_api_secret_2024"
+# 注意：现在从系统设置中读取QQ回复消息秘钥
+API_SECRET_KEY = "xianyu_api_secret_2024"  # 保留作为后备
 
 class SendMessageRequest(BaseModel):
     api_key: str
@@ -868,7 +869,20 @@ class SendMessageResponse(BaseModel):
 
 def verify_api_key(api_key: str) -> bool:
     """验证API秘钥"""
-    return api_key == API_SECRET_KEY
+    try:
+        # 从系统设置中获取QQ回复消息秘钥
+        from db_manager import db_manager
+        qq_secret_key = db_manager.get_system_setting('qq_reply_secret_key')
+
+        # 如果系统设置中没有配置，使用默认值
+        if not qq_secret_key:
+            qq_secret_key = API_SECRET_KEY
+
+        return api_key == qq_secret_key
+    except Exception as e:
+        logger.error(f"验证API秘钥时发生异常: {e}")
+        # 异常情况下使用默认秘钥验证
+        return api_key == API_SECRET_KEY
 
 
 @app.post('/send-message', response_model=SendMessageResponse)
@@ -889,6 +903,22 @@ async def send_message_api(request: SendMessageRequest):
         cleaned_to_user_id = clean_param(request.to_user_id)
         cleaned_message = clean_param(request.message)
 
+        # 验证API秘钥不能为空
+        if not cleaned_api_key:
+            logger.warning("API秘钥为空")
+            return SendMessageResponse(
+                success=False,
+                message="API秘钥不能为空"
+            )
+
+        # 特殊测试秘钥处理
+        if cleaned_api_key == "zhinina_test_key":
+            logger.info("使用测试秘钥，直接返回成功")
+            return SendMessageResponse(
+                success=True,
+                message="接口验证成功"
+            )
+
         # 验证API秘钥
         if not verify_api_key(cleaned_api_key):
             logger.warning(f"API秘钥验证失败: {cleaned_api_key}")
@@ -896,6 +926,22 @@ async def send_message_api(request: SendMessageRequest):
                 success=False,
                 message="API秘钥验证失败"
             )
+
+        # 验证必需参数不能为空
+        required_params = {
+            'cookie_id': cleaned_cookie_id,
+            'chat_id': cleaned_chat_id,
+            'to_user_id': cleaned_to_user_id,
+            'message': cleaned_message
+        }
+
+        for param_name, param_value in required_params.items():
+            if not param_value:
+                logger.warning(f"必需参数 {param_name} 为空")
+                return SendMessageResponse(
+                    success=False,
+                    message=f"参数 {param_name} 不能为空"
+                )
 
         # 直接获取XianyuLive实例，跳过cookie_manager检查
         from XianyuAutoAsync import XianyuLive

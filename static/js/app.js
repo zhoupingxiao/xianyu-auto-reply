@@ -7938,18 +7938,28 @@ async function loadSystemSettings() {
 
             console.log('用户信息:', result, '是否管理员:', isAdmin);
 
-            // 显示/隐藏注册设置和外发配置（仅管理员可见）
+            // 显示/隐藏管理员专用设置（仅管理员可见）
+            const apiSecuritySettings = document.getElementById('api-security-settings');
             const registrationSettings = document.getElementById('registration-settings');
             const outgoingConfigs = document.getElementById('outgoing-configs');
+            const backupManagement = document.getElementById('backup-management');
+
+            if (apiSecuritySettings) {
+                apiSecuritySettings.style.display = isAdmin ? 'block' : 'none';
+            }
             if (registrationSettings) {
                 registrationSettings.style.display = isAdmin ? 'block' : 'none';
             }
             if (outgoingConfigs) {
                 outgoingConfigs.style.display = isAdmin ? 'block' : 'none';
             }
+            if (backupManagement) {
+                backupManagement.style.display = isAdmin ? 'block' : 'none';
+            }
 
-            // 如果是管理员，加载注册设置、登录信息设置和外发配置
+            // 如果是管理员，加载所有管理员设置
             if (isAdmin) {
+                await loadAPISecuritySettings();
                 await loadRegistrationSettings();
                 await loadLoginInfoSettings();
                 await loadOutgoingConfigs();
@@ -7962,6 +7972,115 @@ async function loadSystemSettings() {
         if (registrationSettings) {
             registrationSettings.style.display = 'none';
         }
+    }
+}
+
+// 加载API安全设置
+async function loadAPISecuritySettings() {
+    try {
+        const response = await fetch('/system-settings', {
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (response.ok) {
+            const settings = await response.json();
+
+            // 加载QQ回复消息秘钥
+            const qqReplySecretKey = settings.qq_reply_secret_key || '';
+            const qqReplySecretKeyInput = document.getElementById('qqReplySecretKey');
+            if (qqReplySecretKeyInput) {
+                qqReplySecretKeyInput.value = qqReplySecretKey;
+            }
+        }
+    } catch (error) {
+        console.error('加载API安全设置失败:', error);
+        showToast('加载API安全设置失败', 'danger');
+    }
+}
+
+// 切换密码可见性
+function togglePasswordVisibility(inputId) {
+    const input = document.getElementById(inputId);
+    const icon = document.getElementById(inputId + '-icon');
+
+    if (input && icon) {
+        if (input.type === 'password') {
+            input.type = 'text';
+            icon.className = 'bi bi-eye-slash';
+        } else {
+            input.type = 'password';
+            icon.className = 'bi bi-eye';
+        }
+    }
+}
+
+// 生成随机秘钥
+function generateRandomSecretKey() {
+    // 生成32位随机字符串
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = 'xianyu_qq_';
+    for (let i = 0; i < 24; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    const qqReplySecretKeyInput = document.getElementById('qqReplySecretKey');
+    if (qqReplySecretKeyInput) {
+        qqReplySecretKeyInput.value = result;
+        showToast('随机秘钥已生成', 'success');
+    }
+}
+
+// 更新QQ回复消息秘钥
+async function updateQQReplySecretKey() {
+    const qqReplySecretKey = document.getElementById('qqReplySecretKey').value.trim();
+
+    if (!qqReplySecretKey) {
+        showToast('请输入QQ回复消息API秘钥', 'warning');
+        return;
+    }
+
+    if (qqReplySecretKey.length < 8) {
+        showToast('秘钥长度至少需要8位字符', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/system-settings/qq_reply_secret_key', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+                value: qqReplySecretKey,
+                description: 'QQ回复消息API秘钥'
+            })
+        });
+
+        if (response.ok) {
+            showToast('QQ回复消息API秘钥更新成功', 'success');
+
+            // 显示状态信息
+            const statusDiv = document.getElementById('qqReplySecretStatus');
+            const statusText = document.getElementById('qqReplySecretStatusText');
+            if (statusDiv && statusText) {
+                statusText.textContent = `秘钥已更新，长度: ${qqReplySecretKey.length} 位`;
+                statusDiv.style.display = 'block';
+
+                // 3秒后隐藏状态
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+            }
+        } else {
+            const errorData = await response.json();
+            showToast(`更新失败: ${errorData.detail || '未知错误'}`, 'danger');
+        }
+    } catch (error) {
+        console.error('更新QQ回复消息秘钥失败:', error);
+        showToast('更新QQ回复消息秘钥失败', 'danger');
     }
 }
 
