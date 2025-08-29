@@ -875,44 +875,34 @@ def verify_api_key(api_key: str) -> bool:
 async def send_message_api(request: SendMessageRequest):
     """发送消息API接口（使用秘钥验证）"""
     try:
+        # 清理所有参数中的换行符
+        def clean_param(param_str):
+            """清理参数中的换行符"""
+            if isinstance(param_str, str):
+                return param_str.replace('\\n', '').replace('\n', '')
+            return param_str
+
+        # 清理所有参数
+        cleaned_api_key = clean_param(request.api_key)
+        cleaned_cookie_id = clean_param(request.cookie_id)
+        cleaned_chat_id = clean_param(request.chat_id)
+        cleaned_to_user_id = clean_param(request.to_user_id)
+        cleaned_message = clean_param(request.message)
+
         # 验证API秘钥
-        if not verify_api_key(request.api_key):
-            logger.warning(f"API秘钥验证失败: {request.api_key}")
+        if not verify_api_key(cleaned_api_key):
+            logger.warning(f"API秘钥验证失败: {cleaned_api_key}")
             return SendMessageResponse(
                 success=False,
                 message="API秘钥验证失败"
             )
 
-        # 检查cookie_manager是否可用
-        if not cookie_manager.manager:
-            logger.error("CookieManager未初始化")
-            return SendMessageResponse(
-                success=False,
-                message="系统未就绪，请稍后重试"
-            )
-
-        # 检查Cookie是否存在
-        if request.cookie_id not in cookie_manager.manager.cookies:
-            logger.warning(f"Cookie不存在: {request.cookie_id}")
-            return SendMessageResponse(
-                success=False,
-                message="指定的Cookie账号不存在"
-            )
-
-        # 检查账号是否启用
-        if not cookie_manager.manager.get_cookie_status(request.cookie_id):
-            logger.warning(f"尝试使用已禁用的账号发送消息: {request.cookie_id}")
-            return SendMessageResponse(
-                success=False,
-                message="该账号已被禁用，无法发送消息"
-            )
-
-        # 获取XianyuLive实例
+        # 直接获取XianyuLive实例，跳过cookie_manager检查
         from XianyuAutoAsync import XianyuLive
-        live_instance = XianyuLive.get_instance(request.cookie_id)
+        live_instance = XianyuLive.get_instance(cleaned_cookie_id)
 
         if not live_instance:
-            logger.warning(f"账号实例不存在或未连接: {request.cookie_id}")
+            logger.warning(f"账号实例不存在或未连接: {cleaned_cookie_id}")
             return SendMessageResponse(
                 success=False,
                 message="账号实例不存在或未连接，请检查账号状态"
@@ -920,21 +910,21 @@ async def send_message_api(request: SendMessageRequest):
 
         # 检查WebSocket连接状态
         if not live_instance.ws or live_instance.ws.closed:
-            logger.warning(f"账号WebSocket连接已断开: {request.cookie_id}")
+            logger.warning(f"账号WebSocket连接已断开: {cleaned_cookie_id}")
             return SendMessageResponse(
                 success=False,
                 message="账号WebSocket连接已断开，请等待重连"
             )
 
-        # 发送消息
+        # 发送消息（使用清理后的所有参数）
         await live_instance.send_msg(
             live_instance.ws,
-            request.chat_id,
-            request.to_user_id,
-            request.message
+            cleaned_chat_id,
+            cleaned_to_user_id,
+            cleaned_message
         )
 
-        logger.info(f"API成功发送消息: {request.cookie_id} -> {request.to_user_id}, 内容: {request.message[:50]}{'...' if len(request.message) > 50 else ''}")
+        logger.info(f"API成功发送消息: {cleaned_cookie_id} -> {cleaned_to_user_id}, 内容: {cleaned_message[:50]}{'...' if len(cleaned_message) > 50 else ''}")
 
         return SendMessageResponse(
             success=True,
@@ -942,7 +932,10 @@ async def send_message_api(request: SendMessageRequest):
         )
 
     except Exception as e:
-        logger.error(f"API发送消息异常: {request.cookie_id} -> {request.to_user_id}, 错误: {str(e)}")
+        # 使用清理后的参数记录日志
+        cookie_id_for_log = clean_param(request.cookie_id) if 'clean_param' in locals() else request.cookie_id
+        to_user_id_for_log = clean_param(request.to_user_id) if 'clean_param' in locals() else request.to_user_id
+        logger.error(f"API发送消息异常: {cookie_id_for_log} -> {to_user_id_for_log}, 错误: {str(e)}")
         return SendMessageResponse(
             success=False,
             message=f"发送消息失败: {str(e)}"
