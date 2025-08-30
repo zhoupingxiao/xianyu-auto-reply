@@ -37,6 +37,11 @@ class AutoReplyPauseManager:
             logger.error(f"获取账号 {cookie_id} 暂停时间失败: {e}，使用默认10分钟")
             pause_minutes = 10
 
+        # 如果暂停时间为0，表示不暂停
+        if pause_minutes == 0:
+            logger.info(f"【{cookie_id}】检测到手动发出消息，但暂停时间设置为0，不暂停自动回复")
+            return
+
         pause_duration_seconds = pause_minutes * 60
         pause_until = time.time() + pause_duration_seconds
         self.paused_chats[chat_id] = pause_until

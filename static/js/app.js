@@ -1269,8 +1269,8 @@ async function loadCookies() {
         </td>
         <td class="align-middle">
             <div class="pause-duration-cell" data-cookie-id="${cookie.id}">
-                <span class="pause-duration-display" onclick="editPauseDuration('${cookie.id}', ${cookie.pause_duration || 10})" title="点击编辑暂停时间" style="cursor: pointer; color: #6c757d; font-size: 0.875rem;">
-                    <i class="bi bi-clock me-1"></i>${cookie.pause_duration || 10}分钟
+                <span class="pause-duration-display" onclick="editPauseDuration('${cookie.id}', ${cookie.pause_duration !== undefined ? cookie.pause_duration : 10})" title="点击编辑暂停时间" style="cursor: pointer; color: #6c757d; font-size: 0.875rem;">
+                    <i class="bi bi-clock me-1"></i>${cookie.pause_duration === 0 ? '不暂停' : (cookie.pause_duration || 10) + '分钟'}
                 </span>
             </div>
         </td>
@@ -7797,16 +7797,16 @@ function editPauseDuration(cookieId, currentDuration) {
     const input = document.createElement('input');
     input.type = 'number';
     input.className = 'form-control form-control-sm';
-    input.value = currentDuration || 10;
+    input.value = currentDuration !== undefined ? currentDuration : 10;
     input.placeholder = '请输入暂停时间...';
     input.style.fontSize = '0.875rem';
-    input.min = 1;
+    input.min = 0;
     input.max = 60;
     input.step = 1;
 
     // 保存原始内容和原始值
     const originalContent = pauseCell.innerHTML;
-    const originalValue = currentDuration || 10;
+    const originalValue = currentDuration !== undefined ? currentDuration : 10;
 
     // 标记是否已经进行了编辑
     let hasChanged = false;
@@ -7818,7 +7818,7 @@ function editPauseDuration(cookieId, currentDuration) {
 
     // 监听输入变化
     input.addEventListener('input', () => {
-        const newValue = parseInt(input.value) || 10;
+        const newValue = input.value === '' ? 10 : parseInt(input.value);
         hasChanged = newValue !== originalValue;
     });
 
@@ -7827,12 +7827,12 @@ function editPauseDuration(cookieId, currentDuration) {
         console.log('savePauseDuration called, isProcessing:', isProcessing, 'hasChanged:', hasChanged); // 调试信息
         if (isProcessing) return; // 防止重复调用
 
-        const newDuration = parseInt(input.value) || 10;
+        const newDuration = input.value === '' ? 10 : parseInt(input.value);
         console.log('newDuration:', newDuration, 'originalValue:', originalValue); // 调试信息
 
         // 验证范围
-        if (newDuration < 1 || newDuration > 60) {
-            showToast('暂停时间必须在1-60分钟之间', 'warning');
+        if (isNaN(newDuration) || newDuration < 0 || newDuration > 60) {
+            showToast('暂停时间必须在0-60分钟之间（0表示不暂停）', 'warning');
             input.focus();
             return;
         }
@@ -7860,7 +7860,7 @@ function editPauseDuration(cookieId, currentDuration) {
                 // 更新显示
                 pauseCell.innerHTML = `
                     <span class="pause-duration-display" onclick="editPauseDuration('${cookieId}', ${newDuration})" title="点击编辑暂停时间" style="cursor: pointer; color: #6c757d; font-size: 0.875rem;">
-                        <i class="bi bi-clock me-1"></i>${newDuration}分钟
+                        <i class="bi bi-clock me-1"></i>${newDuration === 0 ? '不暂停' : newDuration + '分钟'}
                     </span>
                 `;
                 showToast('暂停时间更新成功', 'success');

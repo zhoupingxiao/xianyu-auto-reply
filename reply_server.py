@@ -1068,6 +1068,11 @@ class MessageNotificationIn(BaseModel):
 
 
 class SystemSettingIn(BaseModel):
+    value: str
+    description: Optional[str] = None
+
+
+class SystemSettingCreateIn(BaseModel):
     key: str
     value: str
     description: Optional[str] = None
@@ -2167,9 +2172,9 @@ def update_cookie_pause_duration(cid: str, update_data: PauseDurationUpdate, cur
         if cid not in user_cookies:
             raise HTTPException(status_code=403, detail="无权限操作该Cookie")
 
-        # 验证暂停时间范围（1-60分钟）
-        if not (1 <= update_data.pause_duration <= 60):
-            raise HTTPException(status_code=400, detail="暂停时间必须在1-60分钟之间")
+        # 验证暂停时间范围（0-60分钟，0表示不暂停）
+        if not (0 <= update_data.pause_duration <= 60):
+            raise HTTPException(status_code=400, detail="暂停时间必须在0-60分钟之间（0表示不暂停）")
 
         # 更新暂停时间
         success = db_manager.update_cookie_pause_duration(cid, update_data.pause_duration)

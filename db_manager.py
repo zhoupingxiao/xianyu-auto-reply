@@ -1211,7 +1211,7 @@ class DBManager:
                         'user_id': result[2],
                         'auto_confirm': bool(result[3]),
                         'remark': result[4] or '',
-                        'pause_duration': result[5] if result[5] is not None else 10,
+                        'pause_duration': result[5] if result[5] is not None else 10,  # 0是有效值，表示不暂停
                         'created_at': result[6]
                     }
                 return None
@@ -1272,7 +1272,7 @@ class DBManager:
                         self._execute_sql(cursor, "UPDATE cookies SET pause_duration = 10 WHERE id = ?", (cookie_id,))
                         self.conn.commit()
                         return 10
-                    return result[0]  # 返回实际值，不使用or操作符
+                    return result[0]  # 返回实际值，包括0（0表示不暂停）
                 else:
                     logger.warning(f"账号 {cookie_id} 未找到记录，使用默认值10分钟")
                     return 10
