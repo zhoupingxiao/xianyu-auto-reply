@@ -24,6 +24,7 @@ from ai_reply_engine import ai_reply_engine
 from utils.qr_login import qr_login_manager
 from utils.xianyu_utils import trans_cookies
 from utils.image_utils import image_manager
+
 from loguru import logger
 
 # 关键字文件路径
@@ -2352,12 +2353,40 @@ def update_keywords_with_item_id(cid: str, body: KeywordWithItemIdIn, current_us
             raise HTTPException(status_code=500, detail="保存关键词失败")
     except Exception as e:
         error_msg = str(e)
-        if "UNIQUE constraint failed" in error_msg:
-            # 解析具体的冲突信息
-            if "keywords.cookie_id, keywords.keyword" in error_msg:
-                raise HTTPException(status_code=400, detail="关键词重复！该关键词已存在（可能是图片关键词或文本关键词），请使用其他关键词")
+
+        # 检查是否是图片关键词冲突
+        if "已存在（图片关键词）" in error_msg:
+            # 直接使用数据库管理器提供的友好错误信息
+            raise HTTPException(status_code=400, detail=error_msg)
+        elif "UNIQUE constraint failed" in error_msg or "唯一约束冲突" in error_msg:
+            # 尝试从错误信息中提取具体的冲突关键词
+            conflict_keyword = None
+            conflict_type = None
+
+            # 检查是否是数据库管理器抛出的详细错误
+            if "关键词唯一约束冲突" in error_msg:
+                # 解析详细错误信息：关键词唯一约束冲突: Cookie=xxx, 关键词='xxx', 通用关键词/商品ID: xxx
+                import re
+                keyword_match = re.search(r"关键词='([^']+)'", error_msg)
+                if keyword_match:
+                    conflict_keyword = keyword_match.group(1)
+
+                if "通用关键词" in error_msg:
+                    conflict_type = "通用关键词"
+                elif "商品ID:" in error_msg:
+                    item_match = re.search(r"商品ID: ([^\s,]+)", error_msg)
+                    if item_match:
+                        conflict_type = f"商品关键词（商品ID: {item_match.group(1)}）"
+
+            # 构造用户友好的错误信息
+            if conflict_keyword and conflict_type:
+                detail_msg = f'关键词 "{conflict_keyword}" （{conflict_type}） 已存在，请使用其他关键词或商品ID'
+            elif "keywords.cookie_id, keywords.keyword" in error_msg:
+                detail_msg = "关键词重复！该关键词已存在（可能是图片关键词或文本关键词），请使用其他关键词"
             else:
-                raise HTTPException(status_code=400, detail="关键词重复！请使用不同的关键词或商品ID组合")
+                detail_msg = "关键词重复！请使用不同的关键词或商品ID组合"
+
+            raise HTTPException(status_code=400, detail=detail_msg)
         else:
             log_with_user('error', f"保存关键词时发生未知错误: {error_msg}", current_user)
             raise HTTPException(status_code=500, detail="保存关键词失败")
@@ -4470,6 +4499,43 @@ def update_item_multi_quantity_delivery(cookie_id: str, item_id: str, delivery_d
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+# ==================== 订单管理接口 ====================
+
+@app.get('/api/orders')
+def get_user_orders(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取当前用户的订单信息"""
+    try:
+        from db_manager import db_manager
+
+        user_id = current_user['user_id']
+        log_with_user('info', "查询用户订单信息", current_user)
+
+        # 获取用户的所有Cookie
+        user_cookies = db_manager.get_all_cookies(user_id)
+
+        # 获取所有订单数据
+        all_orders = []
+        for cookie_id in user_cookies.keys():
+            orders = db_manager.get_orders_by_cookie(cookie_id, limit=1000)  # 增加限制数量
+            # 为每个订单添加cookie_id信息
+            for order in orders:
+                order['cookie_id'] = cookie_id
+                all_orders.append(order)
+
+        # 按创建时间倒序排列
+        all_orders.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+
+        log_with_user('info', f"用户订单查询成功，共 {len(all_orders)} 条记录", current_user)
+        return {"success": True, "data": all_orders}
+
+    except Exception as e:
+        log_with_user('error', f"查询用户订单失败: {str(e)}", current_user)
+        raise HTTPException(status_code=500, detail=f"查询订单失败: {str(e)}")
 
 
 # 移除自动启动，由Start.py或手动启动

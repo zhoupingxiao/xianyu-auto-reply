@@ -1339,6 +1339,29 @@ class DBManager:
             try:
                 cursor = self.conn.cursor()
 
+                # 检查是否与现有图片关键词冲突
+                for keyword, reply, item_id in keywords:
+                    normalized_item_id = item_id if item_id and item_id.strip() else None
+
+                    # 检查是否存在同名的图片关键词
+                    if normalized_item_id:
+                        # 有商品ID的情况：检查 (cookie_id, keyword, item_id) 是否存在图片关键词
+                        self._execute_sql(cursor,
+                            "SELECT type FROM keywords WHERE cookie_id = ? AND keyword = ? AND item_id = ? AND type = 'image'",
+                            (cookie_id, keyword, normalized_item_id))
+                    else:
+                        # 通用关键词的情况：检查 (cookie_id, keyword) 是否存在图片关键词
+                        self._execute_sql(cursor,
+                            "SELECT type FROM keywords WHERE cookie_id = ? AND keyword = ? AND (item_id IS NULL OR item_id = '') AND type = 'image'",
+                            (cookie_id, keyword))
+
+                    if cursor.fetchone():
+                        # 存在同名图片关键词，抛出友好的错误信息
+                        item_desc = f"商品ID: {normalized_item_id}" if normalized_item_id else "通用关键词"
+                        error_msg = f"关键词 '{keyword}' （{item_desc}） 已存在（图片关键词），无法保存为文本关键词"
+                        logger.warning(f"文本关键词与图片关键词冲突: Cookie={cookie_id}, 关键词='{keyword}', {item_desc}")
+                        raise ValueError(error_msg)
+
                 # 只删除该cookie_id的文本类型关键字，保留图片关键词
                 self._execute_sql(cursor,
                     "DELETE FROM keywords WHERE cookie_id = ? AND (type IS NULL OR type = 'text')",
@@ -1349,22 +1372,15 @@ class DBManager:
                     # 标准化item_id：空字符串转为NULL
                     normalized_item_id = item_id if item_id and item_id.strip() else None
 
-                    try:
-                        self._execute_sql(cursor,
-                            "INSERT INTO keywords (cookie_id, keyword, reply, item_id, type) VALUES (?, ?, ?, ?, 'text')",
-                            (cookie_id, keyword, reply, normalized_item_id))
-                    except sqlite3.IntegrityError as ie:
-                        # 如果遇到唯一约束冲突，记录详细错误信息并回滚
-                        item_desc = f"商品ID: {normalized_item_id}" if normalized_item_id else "通用关键词"
-                        logger.error(f"关键词唯一约束冲突: Cookie={cookie_id}, 关键词='{keyword}', {item_desc}")
-                        self.conn.rollback()
-                        raise ie
+                    self._execute_sql(cursor,
+                        "INSERT INTO keywords (cookie_id, keyword, reply, item_id, type) VALUES (?, ?, ?, ?, 'text')",
+                        (cookie_id, keyword, reply, normalized_item_id))
 
                 self.conn.commit()
                 logger.info(f"文本关键字保存成功: {cookie_id}, {len(keywords)}条，图片关键词已保留")
                 return True
-            except sqlite3.IntegrityError:
-                # 唯一约束冲突，重新抛出异常让上层处理
+            except ValueError:
+                # 重新抛出友好的错误信息
                 raise
             except Exception as e:
                 logger.error(f"文本关键字保存失败: {e}")
