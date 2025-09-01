@@ -1,0 +1,55 @@
+name: 构建多架构 Docker 镜像（国际版）
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-multi-arch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64  # 支持 x64 和 arm64 架构
+
+      - name: 登录 Docker 仓库
+        if: github.event_name != 'pull_request'  # PR 事件不推送镜像
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 提取镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ secrets.DOCKER_USERNAME }}/xianyu-auto-reply  # 替换为你的镜像仓库地址
+          tags: |
+            type=ref,event=branch        # 分支名标签（如 main）
+            type=ref,event=tag           # 版本标签（如 v1.0.0）
+            type=sha,format=short        # 短 SHA 标签（如 abc123）
+            type=raw,value=latest        # 始终保留 latest 标签
+
+      - name: 构建并推送国际版多架构镜像
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile  # 仅使用国际版 Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}  # PR 时仅构建不推送
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 确保 entrypoint.sh 可执行（解决容器启动权限问题）
+          build-args: |
+            EXTRA_CMD=chmod +x /app/entrypoint.sh
+          # 启用缓存加速构建
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
