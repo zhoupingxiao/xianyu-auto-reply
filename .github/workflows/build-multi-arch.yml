@@ -1,4 +1,4 @@
-name: 构建多架构 Docker 镜像（国际版）
+name: deploy docker
 
 on:
   push:
