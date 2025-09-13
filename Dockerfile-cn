@@ -1,4 +1,4 @@
-# 使用Python 3.11作为基础镜像
+# 使用Python 3.11作为基础镜像（支持多架构）
 FROM python:3.11-slim-bookworm
 
 # 设置标签信息
@@ -18,11 +18,13 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV TZ=Asia/Shanghai
 ENV DOCKER_ENV=true
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# 添加PyPI镜像地址变量，方便不同架构下调整
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
-#更换中科大源
+# 更换中科大源
 RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources
 
-# 安装系统依赖（包括Playwright浏览器依赖）
+# 安装系统依赖（根据架构调整）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         # 基础工具
@@ -31,6 +33,11 @@ RUN apt-get update && \
         tzdata \
         curl \
         ca-certificates \
+        # 编译工具（ARM架构可能需要从源码编译部分包）
+        gcc \
+        g++ \
+        make \
+        libc6-dev \
         # 图像处理依赖
         libjpeg-dev \
         libpng-dev \
@@ -76,16 +83,39 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 RUN node --version && npm --version
 ENV NODE_PATH=/usr/lib/node_modules
 
-# 复制requirements.txt并安装Python依赖
+# 打印当前架构信息（用于调试）
+RUN echo "当前架构: $(uname -m)"
+
+# 复制requirements.txt并安装Python依赖（针对不同架构做特殊处理）
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple&& \
-    pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+RUN set -e; \
+    arch=$(uname -m); \
+    echo "开始在 $arch 架构上安装依赖"; \
+    pip install --no-cache-dir --upgrade pip -i $PIP_INDEX_URL; \
+    \
+    # 针对ARM 32位架构的特殊处理
+    if [ "$arch" = "armv7l" ]; then \
+        echo "检测到ARM 32位架构，启用特殊安装模式"; \
+        # 某些包在ARM 32位上需要从源码编译
+        pip install --no-cache-dir --no-binary :all: cryptography -i $PIP_INDEX_URL; \
+        pip install --no-cache-dir --no-binary :all: cffi -i $PIP_INDEX_URL; \
+    fi; \
+    \
+    # 安装主要依赖
+    pip install --no-cache-dir -r requirements.txt -i $PIP_INDEX_URL;
 
 # 复制项目文件
 COPY . .
 
-# 安装Playwright浏览器（必须在复制项目文件之后）
-RUN playwright install chromium && \
+# 安装Playwright浏览器（针对不同架构可能需要不同处理）
+RUN arch=$(uname -m); \
+    echo "在 $arch 架构上安装Playwright浏览器"; \
+    # 对于ARM架构，确保安装兼容的浏览器版本
+    if [[ "$arch" == arm* ]]; then \
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 playwright install chromium; \
+    else \
+        playwright install chromium; \
+    fi && \
     playwright install-deps chromium
 
 # 创建必要的目录并设置权限
@@ -108,3 +138,4 @@ RUN chmod +x /app/entrypoint.sh
 
 # 启动命令
 CMD ["/app/entrypoint.sh"]
+    
