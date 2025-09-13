@@ -17,7 +17,7 @@ jobs:
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          platforms: linux/amd64,linux/arm64,linux/arm/v7  # 新增 linux/arm/v7 支持 arm32 架构
+          platforms: linux/amd64,linux/arm64
 
       - name: 登录 Docker 仓库
         if: github.event_name != 'pull_request'  # PR 事件不推送镜像
