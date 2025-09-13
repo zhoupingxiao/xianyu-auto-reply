@@ -17,7 +17,7 @@ jobs:
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64  # 支持 x64 和 arm64 架构
 
       - name: 登录 Docker 仓库
         if: github.event_name != 'pull_request'  # PR 事件不推送镜像
@@ -43,7 +43,7 @@ jobs:
           context: .
           file: ./Dockerfile-cn  # Dockerfile
           push: ${{ github.event_name != 'pull_request' }}  # PR 时仅构建不推送
-          platforms: linux/amd64,linux/arm64,linux/arm/v7  # 同样在这里添加 arm32 架构
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # 确保 entrypoint.sh 可执行（解决容器启动权限问题）
