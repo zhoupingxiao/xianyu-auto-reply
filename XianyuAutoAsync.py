@@ -5,6 +5,7 @@ import time
 import base64
 import os
 import random
+from enum import Enum
 from loguru import logger
 import websockets
 from utils.xianyu_utils import (
@@ -21,6 +22,16 @@ import sys
 import aiohttp
 from collections import defaultdict
 from db_manager import db_manager
+
+
+class ConnectionState(Enum):
+    """WebSocket连接状态枚举"""
+    DISCONNECTED = "disconnected"  # 未连接
+    CONNECTING = "connecting"  # 连接中
+    CONNECTED = "connected"  # 已连接
+    RECONNECTING = "reconnecting"  # 重连中
+    FAILED = "failed"  # 连接失败
+    CLOSED = "closed"  # 已关闭
 
 
 class AutoReplyPauseManager:
@@ -156,8 +167,10 @@ class XianyuLive:
     _order_detail_lock_times = {}
 
     # 商品详情缓存（24小时有效）
-    _item_detail_cache = {}  # {item_id: {'detail': str, 'timestamp': float}}
+    _item_detail_cache = {}  # {item_id: {'detail': str, 'timestamp': float, 'access_time': float}}
     _item_detail_cache_lock = asyncio.Lock()
+    _item_detail_cache_max_size = 1000  # 最大缓存1000个商品
+    _item_detail_cache_ttl = 24 * 60 * 60  # 24小时TTL
 
     # 类级别的实例管理字典，用于API调用
     _instances = {}  # {cookie_id: XianyuLive实例}
@@ -172,6 +185,190 @@ class XianyuLive:
                 return repr(e)
             except:
                 return "未知错误"
+
+    def _set_connection_state(self, new_state: ConnectionState, reason: str = ""):
+        """设置连接状态并记录日志"""
+        if self.connection_state != new_state:
+            old_state = self.connection_state
+            self.connection_state = new_state
+            self.last_state_change_time = time.time()
+            
+            # 记录状态转换
+            state_msg = f"【{self.cookie_id}】连接状态: {old_state.value} → {new_state.value}"
+            if reason:
+                state_msg += f" ({reason})"
+            
+            # 根据状态严重程度选择日志级别
+            if new_state == ConnectionState.FAILED:
+                logger.error(state_msg)
+            elif new_state == ConnectionState.RECONNECTING:
+                logger.warning(state_msg)
+            elif new_state == ConnectionState.CONNECTED:
+                logger.success(state_msg)
+            else:
+                logger.info(state_msg)
+
+    async def _cancel_background_tasks(self):
+        """取消并清理所有后台任务"""
+        tasks_to_cancel = []
+        
+        # 收集所有需要取消的任务
+        if self.heartbeat_task:
+            tasks_to_cancel.append(("心跳任务", self.heartbeat_task))
+        if self.token_refresh_task:
+            tasks_to_cancel.append(("Token刷新任务", self.token_refresh_task))
+        if self.cleanup_task:
+            tasks_to_cancel.append(("清理任务", self.cleanup_task))
+        if self.cookie_refresh_task:
+            tasks_to_cancel.append(("Cookie刷新任务", self.cookie_refresh_task))
+        
+        if not tasks_to_cancel:
+            logger.debug(f"【{self.cookie_id}】没有后台任务需要取消")
+            return
+        
+        logger.info(f"【{self.cookie_id}】开始取消 {len(tasks_to_cancel)} 个后台任务...")
+        
+        # 取消所有任务
+        for task_name, task in tasks_to_cancel:
+            try:
+                task.cancel()
+                logger.debug(f"【{self.cookie_id}】已发送取消信号: {task_name}")
+            except Exception as e:
+                logger.warning(f"【{self.cookie_id}】取消任务失败 {task_name}: {e}")
+        
+        # 等待所有任务完成取消
+        tasks = [task for _, task in tasks_to_cancel]
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=5.0
+            )
+            logger.info(f"【{self.cookie_id}】所有后台任务已取消")
+        except asyncio.TimeoutError:
+            logger.warning(f"【{self.cookie_id}】等待任务取消超时，强制继续")
+        except Exception as e:
+            logger.warning(f"【{self.cookie_id}】等待任务取消时出错: {e}")
+        
+        # 重置任务引用
+        self.heartbeat_task = None
+        self.token_refresh_task = None
+        self.cleanup_task = None
+        self.cookie_refresh_task = None
+
+    def _calculate_retry_delay(self, error_msg: str) -> int:
+        """根据错误类型和失败次数计算重试延迟"""
+        # WebSocket意外断开 - 短延迟
+        if "no close frame received or sent" in error_msg:
+            return min(3 * self.connection_failures, 15)
+        
+        # 网络连接问题 - 长延迟
+        elif "Connection refused" in error_msg or "timeout" in error_msg.lower():
+            return min(10 * self.connection_failures, 60)
+        
+        # 其他未知错误 - 中等延迟
+        else:
+            return min(5 * self.connection_failures, 30)
+
+    def _cleanup_instance_caches(self):
+        """清理实例级别的缓存，防止内存泄漏"""
+        try:
+            current_time = time.time()
+            cleaned_total = 0
+            
+            # 清理过期的通知记录（保留30分钟内的，从1小时优化）
+            max_notification_age = 1800  # 30分钟（从3600优化）
+            expired_notifications = [
+                key for key, last_time in self.last_notification_time.items()
+                if current_time - last_time > max_notification_age
+            ]
+            for key in expired_notifications:
+                del self.last_notification_time[key]
+            if expired_notifications:
+                cleaned_total += len(expired_notifications)
+                logger.debug(f"【{self.cookie_id}】清理了 {len(expired_notifications)} 个过期通知记录")
+            
+            # 清理过期的发货记录（保留30分钟内的）
+            max_delivery_age = 1800  # 30分钟
+            expired_deliveries = [
+                order_id for order_id, last_time in self.last_delivery_time.items()
+                if current_time - last_time > max_delivery_age
+            ]
+            for order_id in expired_deliveries:
+                del self.last_delivery_time[order_id]
+            if expired_deliveries:
+                cleaned_total += len(expired_deliveries)
+                logger.debug(f"【{self.cookie_id}】清理了 {len(expired_deliveries)} 个过期发货记录")
+            
+            # 清理过期的订单确认记录（保留30分钟内的）
+            max_confirm_age = 1800  # 30分钟
+            expired_confirms = [
+                order_id for order_id, last_time in self.confirmed_orders.items()
+                if current_time - last_time > max_confirm_age
+            ]
+            for order_id in expired_confirms:
+                del self.confirmed_orders[order_id]
+            if expired_confirms:
+                cleaned_total += len(expired_confirms)
+                logger.debug(f"【{self.cookie_id}】清理了 {len(expired_confirms)} 个过期订单确认记录")
+            
+            # 只有实际清理了内容才记录总数日志
+            if cleaned_total > 0:
+                logger.info(f"【{self.cookie_id}】实例缓存清理完成，共清理 {cleaned_total} 条记录")
+                logger.debug(f"【{self.cookie_id}】当前缓存数量 - 通知: {len(self.last_notification_time)}, 发货: {len(self.last_delivery_time)}, 确认: {len(self.confirmed_orders)}")
+        
+        except Exception as e:
+            logger.error(f"【{self.cookie_id}】清理实例缓存时出错: {self._safe_str(e)}")
+    
+    async def _cleanup_playwright_cache(self):
+        """清理Playwright浏览器临时文件和缓存（Docker环境专用）"""
+        try:
+            import shutil
+            import glob
+            
+            # 定义需要清理的临时目录路径
+            temp_paths = [
+                '/tmp/playwright-*',  # Playwright临时会话
+                '/tmp/chromium-*',    # Chromium临时文件
+                '/ms-playwright/chromium-*/Default/Cache',  # 浏览器缓存
+                '/ms-playwright/chromium-*/Default/Code Cache',  # 代码缓存
+                '/ms-playwright/chromium-*/Default/GPUCache',  # GPU缓存
+            ]
+            
+            total_cleaned = 0
+            total_size_mb = 0
+            
+            for pattern in temp_paths:
+                try:
+                    matching_paths = glob.glob(pattern)
+                    for path in matching_paths:
+                        try:
+                            if os.path.exists(path):
+                                # 计算大小
+                                if os.path.isdir(path):
+                                    size = sum(
+                                        os.path.getsize(os.path.join(dirpath, filename))
+                                        for dirpath, _, filenames in os.walk(path)
+                                        for filename in filenames
+                                    )
+                                    shutil.rmtree(path, ignore_errors=True)
+                                else:
+                                    size = os.path.getsize(path)
+                                    os.remove(path)
+                                
+                                total_size_mb += size / (1024 * 1024)
+                                total_cleaned += 1
+                        except Exception as e:
+                            logger.debug(f"清理路径 {path} 时出错: {e}")
+                except Exception as e:
+                    logger.debug(f"匹配路径 {pattern} 时出错: {e}")
+            
+            if total_cleaned > 0:
+                logger.info(f"【{self.cookie_id}】Playwright缓存清理完成: 删除了 {total_cleaned} 个文件/目录，释放 {total_size_mb:.2f} MB")
+            else:
+                logger.debug(f"【{self.cookie_id}】Playwright缓存清理: 没有需要清理的临时文件")
+                
+        except Exception as e:
+            logger.debug(f"【{self.cookie_id}】清理Playwright缓存时出错: {self._safe_str(e)}")
 
     def __init__(self, cookies_str=None, cookie_id: str = "default", user_id: int = None):
         """初始化闲鱼直播类"""
@@ -239,7 +436,7 @@ class XianyuLive:
         self.cookie_refresh_task = None
         self.cookie_refresh_interval = 1200  # 1小时 = 3600秒
         self.last_cookie_refresh_time = 0
-        self.cookie_refresh_running = False  # 防止重复执行Cookie刷新
+        self.cookie_refresh_lock = asyncio.Lock()  # 使用Lock防止重复执行Cookie刷新
         self.cookie_refresh_enabled = True  # 是否启用Cookie刷新功能
 
         # 扫码登录Cookie刷新标志
@@ -260,9 +457,18 @@ class XianyuLive:
         self.max_captcha_verification_count = 3  # 最大滑块验证次数，防止无限递归
 
         # WebSocket连接监控
+        self.connection_state = ConnectionState.DISCONNECTED  # 连接状态
         self.connection_failures = 0  # 连续连接失败次数
         self.max_connection_failures = 5  # 最大连续失败次数
         self.last_successful_connection = 0  # 上次成功连接时间
+        self.last_state_change_time = time.time()  # 上次状态变化时间
+
+        # 后台任务追踪（用于清理未等待的任务）
+        self.background_tasks = set()  # 追踪所有后台任务
+        
+        # 消息处理并发控制（防止内存泄漏）
+        self.message_semaphore = asyncio.Semaphore(100)  # 最多100个并发消息处理任务
+        self.active_message_tasks = 0  # 当前活跃的消息处理任务数
 
         # 初始化订单状态处理器
         self._init_order_status_handler()
@@ -313,6 +519,13 @@ class XianyuLive:
     def get_instance_count(cls):
         """获取当前活跃实例数量"""
         return len(cls._instances)
+    
+    def _create_tracked_task(self, coro):
+        """创建并追踪后台任务，确保异常不会被静默忽略"""
+        task = asyncio.create_task(coro)
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+        return task
 
     def is_auto_confirm_enabled(self) -> bool:
         """检查当前账号是否启用自动确认发货"""
@@ -899,7 +1112,8 @@ class XianyuLive:
                     API_ENDPOINTS.get('token'),
                     params=params,
                     data=data,
-                    headers=headers
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
                     res_json = await response.json()
 
@@ -949,6 +1163,7 @@ class XianyuLive:
                         # 添加风控日志记录
                         log_id = None
                         try:
+                            from db_manager import db_manager
                             success = db_manager.add_risk_control_log(
                                 cookie_id=self.cookie_id,
                                 event_type='slider_captcha',
@@ -971,15 +1186,12 @@ class XianyuLive:
                             captcha_duration = time.time() - captcha_start_time
 
                             if new_cookies_str:
-                                logger.info(f"【{self.cookie_id}】滑块验证成功，获取到新的cookies")
-
-                                # 记录滑块验证成功到日志文件
-                                log_captcha_event(self.cookie_id, "滑块验证成功", True,
-                                    f"耗时: {captcha_duration:.2f}秒, 重试次数: {captcha_retry_count + 1}, cookies长度: {len(new_cookies_str)}")
+                                logger.info(f"【{self.cookie_id}】滑块验证成功，准备重启实例...")
 
                                 # 更新风控日志为成功状态
                                 if 'log_id' in locals() and log_id:
                                     try:
+                                        from db_manager import db_manager
                                         db_manager.update_risk_control_log(
                                             log_id=log_id,
                                             processing_result=f"滑块验证成功，耗时: {captcha_duration:.2f}秒, cookies长度: {len(new_cookies_str)}",
@@ -988,36 +1200,18 @@ class XianyuLive:
                                     except Exception as update_e:
                                         logger.error(f"【{self.cookie_id}】更新风控日志失败: {update_e}")
 
-                                # 更新cookies并重启任务
-                                update_success = await self._update_cookies_and_restart(new_cookies_str)
-                                if update_success:
-                                    logger.info(f"【{self.cookie_id}】cookies更新成功，使用新cookies重新尝试刷新token...")
-
-                                    # 发送滑块验证成功通知
-                                    await self.send_token_refresh_notification(
-                                        f"滑块验证成功，cookies已更新，任务已重启",
-                                        "captcha_verification_success"
-                                    )
-
-                                    # 重新尝试刷新token（递归调用，但有深度限制）
-                                    return await self.refresh_token(captcha_retry_count + 1)
-                                else:
-                                    logger.error(f"【{self.cookie_id}】cookies更新失败")
-                                    await self.send_token_refresh_notification(
-                                        f"滑块验证成功但cookies更新失败",
-                                        "captcha_cookies_update_failed"
-                                    )
-                                    notification_sent = True
+                                # 重启实例（cookies已在_handle_captcha_verification中更新到数据库）
+                                # await self._restart_instance()
+                                
+                                # 重新尝试刷新token（递归调用，但有深度限制）
+                                return await self.refresh_token(captcha_retry_count + 1)
                             else:
                                 logger.error(f"【{self.cookie_id}】滑块验证失败")
-
-                                # 记录滑块验证失败到日志文件
-                                log_captcha_event(self.cookie_id, "滑块验证失败", False,
-                                    f"耗时: {captcha_duration:.2f}秒, 重试次数: {captcha_retry_count + 1}, 原因: 未获取到新cookies")
 
                                 # 更新风控日志为失败状态
                                 if 'log_id' in locals() and log_id:
                                     try:
+                                        from db_manager import db_manager
                                         db_manager.update_risk_control_log(
                                             log_id=log_id,
                                             processing_result=f"滑块验证失败，耗时: {captcha_duration:.2f}秒, 原因: 未获取到新cookies",
@@ -1025,25 +1219,17 @@ class XianyuLive:
                                         )
                                     except Exception as update_e:
                                         logger.error(f"【{self.cookie_id}】更新风控日志失败: {update_e}")
-
-                                await self.send_token_refresh_notification(
-                                    f"滑块验证失败，请检查网络连接或手动处理",
-                                    "captcha_verification_failed"
-                                )
                                 
-                                # 标记已发送通知，避免后续重复发送
+                                # 标记已发送通知（通知已在_handle_captcha_verification中发送）
                                 notification_sent = True
                         except Exception as captcha_e:
                             logger.error(f"【{self.cookie_id}】滑块验证处理异常: {self._safe_str(captcha_e)}")
 
-                            # 记录滑块验证异常到日志文件
-                            captcha_duration = time.time() - captcha_start_time if 'captcha_start_time' in locals() else 0
-                            log_captcha_event(self.cookie_id, "滑块验证异常", False,
-                                f"耗时: {captcha_duration:.2f}秒, 重试次数: {captcha_retry_count + 1}, 异常: {str(captcha_e)}")
-
                             # 更新风控日志为异常状态
+                            captcha_duration = time.time() - captcha_start_time if 'captcha_start_time' in locals() else 0
                             if 'log_id' in locals() and log_id:
                                 try:
+                                    from db_manager import db_manager
                                     db_manager.update_risk_control_log(
                                         log_id=log_id,
                                         processing_result=f"滑块验证处理异常，耗时: {captcha_duration:.2f}秒",
@@ -1052,13 +1238,8 @@ class XianyuLive:
                                     )
                                 except Exception as update_e:
                                     logger.error(f"【{self.cookie_id}】更新风控日志失败: {update_e}")
-
-                            await self.send_token_refresh_notification(
-                                f"滑块验证处理异常: {str(captcha_e)}",
-                                "captcha_verification_exception"
-                            )
                             
-                            # 标记已发送通知，避免后续重复发送
+                            # 标记已发送通知（通知已在_handle_captcha_verification中发送）
                             notification_sent = True
 
                     # 检查是否包含"令牌过期"或"Session过期"
@@ -1119,13 +1300,22 @@ class XianyuLive:
                                     
                                     if update_success:
                                         logger.info(f"【{self.cookie_id}】Cookie更新并重启任务成功")
+                                        
+                                        # 发送账号密码登录成功通知
+                                        await self.send_token_refresh_notification(
+                                            f"账号密码登录成功，Cookie已更新，任务已重启",
+                                            "password_login_success"
+                                        )
                                     else:
                                         logger.warning(f"【{self.cookie_id}】Cookie更新或重启任务失败")
+                                        
                                 else:
                                     logger.warning(f"【{self.cookie_id}】密码登录失败，未获取到Cookie")
+                                    
 
                             except Exception as refresh_e:
                                 logger.error(f"【{self.cookie_id}】Cookie刷新或实例重启失败: {self._safe_str(refresh_e)}")
+                                
                                 # 刷新失败时继续执行原有的失败处理逻辑
 
                     logger.error(f"【{self.cookie_id}】Token刷新失败: {res_json}")
@@ -1134,8 +1324,20 @@ class XianyuLive:
                     self.current_token = None
 
                     # 只有在没有发送过通知的情况下才发送Token刷新失败通知
+                    # 并且WebSocket未连接时才发送（已连接说明只是暂时失败）
                     if not notification_sent:
-                        await self.send_token_refresh_notification(f"Token刷新失败: {res_json}", "token_refresh_failed")
+                        # 检查WebSocket连接状态
+                        is_ws_connected = (
+                            self.connection_state == ConnectionState.CONNECTED and 
+                            self.ws and 
+                            not self.ws.closed
+                        )
+                        
+                        if is_ws_connected:
+                            logger.info(f"【{self.cookie_id}】WebSocket连接正常，Token刷新失败可能是暂时的，跳过失败通知")
+                        else:
+                            logger.warning(f"【{self.cookie_id}】WebSocket未连接，发送Token刷新失败通知")
+                            await self.send_token_refresh_notification(f"Token刷新失败: {res_json}", "token_refresh_failed")
                     else:
                         logger.info(f"【{self.cookie_id}】已发送滑块验证相关通知，跳过Token刷新失败通知")
                     return None
@@ -1147,8 +1349,20 @@ class XianyuLive:
             self.current_token = None
 
             # 只有在没有发送过通知的情况下才发送Token刷新异常通知
+            # 并且WebSocket未连接时才发送（已连接说明只是暂时失败）
             if not notification_sent:
-                await self.send_token_refresh_notification(f"Token刷新异常: {str(e)}", "token_refresh_exception")
+                # 检查WebSocket连接状态
+                is_ws_connected = (
+                    self.connection_state == ConnectionState.CONNECTED and 
+                    self.ws and 
+                    not self.ws.closed
+                )
+                
+                if is_ws_connected:
+                    logger.info(f"【{self.cookie_id}】WebSocket连接正常，Token刷新异常可能是暂时的，跳过失败通知")
+                else:
+                    logger.warning(f"【{self.cookie_id}】WebSocket未连接，发送Token刷新异常通知")
+                    await self.send_token_refresh_notification(f"Token刷新异常: {str(e)}", "token_refresh_exception")
             else:
                 logger.info(f"【{self.cookie_id}】已发送滑块验证相关通知，跳过Token刷新异常通知")
             return None
@@ -1233,7 +1447,7 @@ class XianyuLive:
                     # user_id=f"{self.cookie_id}_{int(time.time() * 1000)}",  # 使用唯一ID避免冲突
                     user_id=f"{self.cookie_id}",  # 使用唯一ID避免冲突
                     enable_learning=True,  # 启用学习功能
-                    headless=True  # 使用无头模式
+                    headless=True  # 使用有头模式（可视化浏览器）
                 )
 
                 # 在线程池中执行滑块验证
@@ -1337,11 +1551,22 @@ class XianyuLive:
                     log_captcha_event(self.cookie_id, "滑块验证失败", False,
                         f"XianyuSliderStealth执行失败, 环境: {'Docker' if os.getenv('DOCKER_ENV') else '本地'}")
 
-                    # 发送通知
-                    await self.send_token_refresh_notification(
-                        f"滑块验证失败，需要手动处理。验证URL: {verification_url}",
-                        "captcha_verification_failed"
+                    # 发送通知（检查WebSocket连接状态）
+                    # 只有在WebSocket未连接时才发送通知，已连接说明可能是暂时性问题
+                    is_ws_connected = (
+                        self.connection_state == ConnectionState.CONNECTED and 
+                        self.ws and 
+                        not self.ws.closed
                     )
+                    
+                    if is_ws_connected:
+                        logger.info(f"【{self.cookie_id}】WebSocket连接正常，滑块验证失败可能是暂时的，跳过通知")
+                    else:
+                        logger.warning(f"【{self.cookie_id}】WebSocket未连接，发送滑块验证失败通知")
+                        await self.send_token_refresh_notification(
+                            f"滑块验证失败，需要手动处理。验证URL: {verification_url}",
+                            "captcha_verification_failed"
+                        )
                     return None
 
             except ImportError as import_e:
@@ -1366,11 +1591,22 @@ class XianyuLive:
                 log_captcha_event(self.cookie_id, "滑块验证异常", False,
                     f"执行异常, 错误: {self._safe_str(stealth_e)[:100]}")
 
-                # 发送通知
-                await self.send_token_refresh_notification(
-                    f"滑块验证执行异常，需要手动处理。验证URL: {verification_url}",
-                    "captcha_execution_error"
+                # 发送通知（检查WebSocket连接状态）
+                # 只有在WebSocket未连接时才发送通知，已连接说明可能是暂时性问题
+                is_ws_connected = (
+                    self.connection_state == ConnectionState.CONNECTED and 
+                    self.ws and 
+                    not self.ws.closed
                 )
+                
+                if is_ws_connected:
+                    logger.info(f"【{self.cookie_id}】WebSocket连接正常，滑块验证执行异常可能是暂时的，跳过通知")
+                else:
+                    logger.warning(f"【{self.cookie_id}】WebSocket未连接，发送滑块验证执行异常通知")
+                    await self.send_token_refresh_notification(
+                        f"滑块验证执行异常，需要手动处理。验证URL: {verification_url}",
+                        "captcha_execution_error"
+                    )
                 return None
 
 
@@ -1627,7 +1863,9 @@ class XianyuLive:
                     current_time = time.time()
 
                     # 检查缓存是否在24小时内
-                    if current_time - cache_time < 24 * 60 * 60:  # 24小时
+                    if current_time - cache_time < self._item_detail_cache_ttl:
+                        # 更新访问时间（用于LRU）
+                        cache_data['access_time'] = current_time
                         logger.info(f"从缓存获取商品详情: {item_id}")
                         return cache_data['detail']
                     else:
@@ -1638,12 +1876,8 @@ class XianyuLive:
             # 2. 尝试使用浏览器获取商品详情
             detail_from_browser = await self._fetch_item_detail_from_browser(item_id)
             if detail_from_browser:
-                # 保存到缓存
-                async with self._item_detail_cache_lock:
-                    self._item_detail_cache[item_id] = {
-                        'detail': detail_from_browser,
-                        'timestamp': time.time()
-                    }
+                # 保存到缓存（带大小限制）
+                await self._add_to_item_cache(item_id, detail_from_browser)
                 logger.info(f"成功通过浏览器获取商品详情: {item_id}, 长度: {len(detail_from_browser)}")
                 return detail_from_browser
 
@@ -1651,12 +1885,8 @@ class XianyuLive:
             logger.warning(f"浏览器获取商品详情失败，尝试外部API: {item_id}")
             detail_from_api = await self._fetch_item_detail_from_external_api(item_id)
             if detail_from_api:
-                # 保存到缓存
-                async with self._item_detail_cache_lock:
-                    self._item_detail_cache[item_id] = {
-                        'detail': detail_from_api,
-                        'timestamp': time.time()
-                    }
+                # 保存到缓存（带大小限制）
+                await self._add_to_item_cache(item_id, detail_from_api)
                 logger.info(f"成功通过外部API获取商品详情: {item_id}, 长度: {len(detail_from_api)}")
                 return detail_from_api
 
@@ -1667,8 +1897,62 @@ class XianyuLive:
             logger.error(f"获取商品详情异常: {item_id}, 错误: {self._safe_str(e)}")
             return ""
 
+    async def _add_to_item_cache(self, item_id: str, detail: str):
+        """添加商品详情到缓存，实现LRU策略和大小限制
+        
+        Args:
+            item_id: 商品ID
+            detail: 商品详情
+        """
+        async with self._item_detail_cache_lock:
+            current_time = time.time()
+            
+            # 检查缓存大小，如果超过限制则清理
+            if len(self._item_detail_cache) >= self._item_detail_cache_max_size:
+                # 使用LRU策略删除最久未访问的项
+                if self._item_detail_cache:
+                    # 找到最久未访问的项
+                    oldest_item = min(
+                        self._item_detail_cache.items(),
+                        key=lambda x: x[1].get('access_time', x[1]['timestamp'])
+                    )
+                    oldest_item_id = oldest_item[0]
+                    del self._item_detail_cache[oldest_item_id]
+                    logger.debug(f"缓存已满，删除最旧项: {oldest_item_id}")
+            
+            # 添加新项到缓存
+            self._item_detail_cache[item_id] = {
+                'detail': detail,
+                'timestamp': current_time,
+                'access_time': current_time
+            }
+            logger.debug(f"添加商品详情到缓存: {item_id}, 当前缓存大小: {len(self._item_detail_cache)}")
+
+    @classmethod
+    async def _cleanup_item_cache(cls):
+        """清理过期的商品详情缓存"""
+        async with cls._item_detail_cache_lock:
+            current_time = time.time()
+            expired_items = []
+            
+            # 找出所有过期的项
+            for item_id, cache_data in cls._item_detail_cache.items():
+                if current_time - cache_data['timestamp'] >= cls._item_detail_cache_ttl:
+                    expired_items.append(item_id)
+            
+            # 删除过期项
+            for item_id in expired_items:
+                del cls._item_detail_cache[item_id]
+            
+            if expired_items:
+                logger.info(f"清理了 {len(expired_items)} 个过期的商品详情缓存")
+            
+            return len(expired_items)
+
     async def _fetch_item_detail_from_browser(self, item_id: str) -> str:
         """使用浏览器获取商品详情"""
+        playwright = None
+        browser = None
         try:
             from playwright.async_api import async_playwright
 
@@ -1757,6 +2041,7 @@ class XianyuLive:
             await asyncio.sleep(3)
 
             # 获取商品详情内容
+            detail_text = ""
             try:
                 # 等待目标元素出现
                 await page.wait_for_selector('.desc--GaIUKUQY', timeout=10000)
@@ -1766,11 +2051,6 @@ class XianyuLive:
                 if detail_element:
                     detail_text = await detail_element.inner_text()
                     logger.info(f"成功获取商品详情: {item_id}, 长度: {len(detail_text)}")
-
-                    # 清理资源
-                    await browser.close()
-                    await playwright.stop()
-
                     return detail_text.strip()
                 else:
                     logger.warning(f"未找到商品详情元素: {item_id}")
@@ -1778,15 +2058,26 @@ class XianyuLive:
             except Exception as e:
                 logger.warning(f"获取商品详情元素失败: {item_id}, 错误: {self._safe_str(e)}")
 
-            # 清理资源
-            await browser.close()
-            await playwright.stop()
-
             return ""
 
         except Exception as e:
             logger.error(f"浏览器获取商品详情异常: {item_id}, 错误: {self._safe_str(e)}")
             return ""
+        finally:
+            # 确保资源被正确清理
+            try:
+                if browser:
+                    await browser.close()
+                    logger.debug(f"Browser已关闭: {item_id}")
+            except Exception as e:
+                logger.warning(f"关闭browser时出错: {self._safe_str(e)}")
+            
+            try:
+                if playwright:
+                    await playwright.stop()
+                    logger.debug(f"Playwright已停止: {item_id}")
+            except Exception as e:
+                logger.warning(f"停止playwright时出错: {self._safe_str(e)}")
 
     async def _fetch_item_detail_from_external_api(self, item_id: str) -> str:
         """从外部API获取商品详情（备用方案）"""
@@ -4202,7 +4493,7 @@ class XianyuLive:
         return False
 
     async def pause_cleanup_loop(self):
-        """定期清理过期的暂停记录和锁"""
+        """定期清理过期的暂停记录、锁和缓存"""
         while True:
             try:
                 # 检查账号是否启用
@@ -4216,6 +4507,56 @@ class XianyuLive:
 
                 # 清理过期的锁（每5分钟清理一次，保留24小时内的锁）
                 self.cleanup_expired_locks(max_age_hours=24)
+
+                # 清理过期的商品详情缓存
+                cleaned_count = await self._cleanup_item_cache()
+                if cleaned_count > 0:
+                    logger.info(f"【{self.cookie_id}】清理了 {cleaned_count} 个过期的商品详情缓存")
+
+                # 清理过期的通知、发货和订单确认记录（防止内存泄漏）
+                self._cleanup_instance_caches()
+
+                # 清理AI回复引擎未使用的客户端（每5分钟检查一次）
+                try:
+                    from ai_reply_engine import ai_reply_engine
+                    ai_reply_engine.cleanup_unused_clients(max_idle_hours=24)
+                except Exception as ai_clean_e:
+                    logger.debug(f"【{self.cookie_id}】清理AI客户端时出错: {ai_clean_e}")
+
+                # 清理QR登录过期会话（每5分钟检查一次）
+                try:
+                    from utils.qr_login import qr_login_manager
+                    qr_login_manager.cleanup_expired_sessions()
+                except Exception as qr_clean_e:
+                    logger.debug(f"【{self.cookie_id}】清理QR登录会话时出错: {qr_clean_e}")
+                
+                # 清理Playwright浏览器临时文件和缓存（每5分钟检查一次）
+                try:
+                    await self._cleanup_playwright_cache()
+                except Exception as pw_clean_e:
+                    logger.debug(f"【{self.cookie_id}】清理Playwright缓存时出错: {pw_clean_e}")
+                
+                # 清理数据库历史数据（每天一次，保留90天数据）
+                # 为避免所有实例同时执行，只让第一个实例执行
+                try:
+                    if hasattr(self.__class__, '_last_db_cleanup_time'):
+                        last_cleanup = self.__class__._last_db_cleanup_time
+                    else:
+                        self.__class__._last_db_cleanup_time = 0
+                        last_cleanup = 0
+                    
+                    current_time = time.time()
+                    # 每24小时清理一次
+                    if current_time - last_cleanup > 86400:
+                        logger.info(f"【{self.cookie_id}】开始执行数据库历史数据清理...")
+                        stats = db_manager.cleanup_old_data(days=90)
+                        if 'error' not in stats:
+                            logger.info(f"【{self.cookie_id}】数据库清理完成: {stats}")
+                            self.__class__._last_db_cleanup_time = current_time
+                        else:
+                            logger.error(f"【{self.cookie_id}】数据库清理失败: {stats['error']}")
+                except Exception as db_clean_e:
+                    logger.debug(f"【{self.cookie_id}】清理数据库历史数据时出错: {db_clean_e}")
 
                 # 每5分钟清理一次
                 await asyncio.sleep(300)
@@ -4250,7 +4591,7 @@ class XianyuLive:
                         remaining_seconds = int(remaining_time % 60)
                         logger.debug(f"【{self.cookie_id}】收到消息后冷却中，还需等待 {remaining_minutes}分{remaining_seconds}秒 才能执行Cookie刷新")
                     # 检查是否已有Cookie刷新任务在执行
-                    elif self.cookie_refresh_running:
+                    elif self.cookie_refresh_lock.locked():
                         logger.debug(f"【{self.cookie_id}】Cookie刷新任务已在执行中，跳过本次触发")
                     else:
                         logger.info(f"【{self.cookie_id}】开始执行Cookie刷新任务...")
@@ -4266,59 +4607,54 @@ class XianyuLive:
     async def _execute_cookie_refresh(self, current_time):
         """独立执行Cookie刷新任务，避免阻塞主循环"""
 
+        # 使用Lock确保原子性，防止重复执行
+        async with self.cookie_refresh_lock:
+            try:
+                logger.info(f"【{self.cookie_id}】开始Cookie刷新任务，暂时暂停心跳以避免连接冲突...")
 
-        # 设置运行状态，防止重复执行
-        self.cookie_refresh_running = True
+                # 暂时暂停心跳任务，避免与浏览器操作冲突
+                heartbeat_was_running = False
+                if self.heartbeat_task and not self.heartbeat_task.done():
+                    heartbeat_was_running = True
+                    self.heartbeat_task.cancel()
+                    logger.debug(f"【{self.cookie_id}】已暂停心跳任务")
 
-        try:
-            logger.info(f"【{self.cookie_id}】开始Cookie刷新任务，暂时暂停心跳以避免连接冲突...")
+                # 为整个Cookie刷新任务添加超时保护（3分钟，缩短时间减少影响）
+                success = await asyncio.wait_for(
+                    self._refresh_cookies_via_browser(),
+                    timeout=180.0  # 3分钟超时，减少对WebSocket的影响
+                )
 
-            # 暂时暂停心跳任务，避免与浏览器操作冲突
-            heartbeat_was_running = False
-            if self.heartbeat_task and not self.heartbeat_task.done():
-                heartbeat_was_running = True
-                self.heartbeat_task.cancel()
-                logger.debug(f"【{self.cookie_id}】已暂停心跳任务")
+                # 重新启动心跳任务
+                if heartbeat_was_running and self.ws and not self.ws.closed:
+                    logger.debug(f"【{self.cookie_id}】重新启动心跳任务")
+                    self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(self.ws))
 
-            # 为整个Cookie刷新任务添加超时保护（3分钟，缩短时间减少影响）
-            success = await asyncio.wait_for(
-                self._refresh_cookies_via_browser(),
-                timeout=180.0  # 3分钟超时，减少对WebSocket的影响
-            )
+                if success:
+                    self.last_cookie_refresh_time = current_time
+                    logger.info(f"【{self.cookie_id}】Cookie刷新任务完成，心跳已恢复")
+                else:
+                    logger.warning(f"【{self.cookie_id}】Cookie刷新任务失败")
+                    # 即使失败也要更新时间，避免频繁重试
+                    self.last_cookie_refresh_time = current_time
 
-            # 重新启动心跳任务
-            if heartbeat_was_running and self.ws and not self.ws.closed:
-                logger.debug(f"【{self.cookie_id}】重新启动心跳任务")
-                self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(self.ws))
-
-            if success:
+            except asyncio.TimeoutError:
+                # 超时也要更新时间，避免频繁重试
                 self.last_cookie_refresh_time = current_time
-                logger.info(f"【{self.cookie_id}】Cookie刷新任务完成，心跳已恢复")
-            else:
-                logger.warning(f"【{self.cookie_id}】Cookie刷新任务失败")
-                # 即使失败也要更新时间，避免频繁重试
+            except Exception as e:
+                logger.error(f"【{self.cookie_id}】执行Cookie刷新任务异常: {self._safe_str(e)}")
+                # 异常也要更新时间，避免频繁重试
                 self.last_cookie_refresh_time = current_time
+            finally:
+                # 确保心跳任务恢复（如果WebSocket仍然连接）
+                if (self.ws and not self.ws.closed and
+                    (not self.heartbeat_task or self.heartbeat_task.done())):
+                    logger.info(f"【{self.cookie_id}】Cookie刷新完成，心跳任务正常运行")
+                    self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(self.ws))
 
-        except asyncio.TimeoutError:
-            # 超时也要更新时间，避免频繁重试
-            self.last_cookie_refresh_time = current_time
-        except Exception as e:
-            logger.error(f"【{self.cookie_id}】执行Cookie刷新任务异常: {self._safe_str(e)}")
-            # 异常也要更新时间，避免频繁重试
-            self.last_cookie_refresh_time = current_time
-        finally:
-            # 确保心跳任务恢复（如果WebSocket仍然连接）
-            if (self.ws and not self.ws.closed and
-                (not self.heartbeat_task or self.heartbeat_task.done())):
-                logger.info(f"【{self.cookie_id}】Cookie刷新完成，心跳任务正常运行")
-                self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(self.ws))
-
-            # 清除运行状态
-            self.cookie_refresh_running = False
-
-            # 清空消息接收标志，允许下次正常执行Cookie刷新
-            self.last_message_received_time = 0
-            logger.debug(f"【{self.cookie_id}】Cookie刷新完成，已清空消息接收标志")
+                # 清空消息接收标志，允许下次正常执行Cookie刷新
+                self.last_message_received_time = 0
+                logger.debug(f"【{self.cookie_id}】Cookie刷新完成，已清空消息接收标志")
 
 
 
@@ -4903,6 +5239,10 @@ class XianyuLive:
             # Cookie刷新模式：正常更新Cookie
             logger.info(f"【{self.cookie_id}】获取更新后的Cookie...")
             updated_cookies = await context.cookies()
+            
+            # 获取并打印当前页面标题
+            page_title = await page.title()
+            logger.info(f"【{self.cookie_id}】当前页面标题: {page_title}")
 
             # 构造新的Cookie字典
             new_cookies_dict = {}
@@ -5244,6 +5584,18 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"调用API出错: {self._safe_str(e)}")
             return None
+
+    async def _handle_message_with_semaphore(self, message_data, websocket):
+        """带信号量的消息处理包装器，防止并发任务过多"""
+        async with self.message_semaphore:
+            self.active_message_tasks += 1
+            try:
+                await self.handle_message(message_data, websocket)
+            finally:
+                self.active_message_tasks -= 1
+                # 定期记录活跃任务数（每100个任务记录一次）
+                if self.active_message_tasks % 100 == 0 and self.active_message_tasks > 0:
+                    logger.info(f"【{self.cookie_id}】当前活跃消息处理任务数: {self.active_message_tasks}")
 
     async def handle_message(self, message_data, websocket):
         """处理所有类型的消息"""
@@ -5771,21 +6123,23 @@ class XianyuLive:
                     headers = WEBSOCKET_HEADERS.copy()
                     headers['Cookie'] = self.cookies_str
 
-                    logger.info(f"【{self.cookie_id}】准备建立WebSocket连接到: {self.base_url}")
-                    logger.debug(f"【{self.cookie_id}】WebSocket headers: {headers}")
+                    # 更新连接状态为连接中
+                    self._set_connection_state(ConnectionState.CONNECTING, "准备建立WebSocket连接")
+                    logger.info(f"【{self.cookie_id}】WebSocket目标地址: {self.base_url}")
 
                     # 兼容不同版本的websockets库
                     async with await self._create_websocket_connection(headers) as websocket:
-                        logger.info(f"【{self.cookie_id}】WebSocket连接建立成功！")
                         self.ws = websocket
+                        logger.info(f"【{self.cookie_id}】WebSocket连接建立成功，开始初始化...")
 
-                        # 更新连接状态
-                        self.connection_failures = 0
-                        self.last_successful_connection = time.time()
-
-                        logger.info(f"【{self.cookie_id}】开始初始化WebSocket连接...")
+                        # 开始初始化
                         await self.init(websocket)
                         logger.info(f"【{self.cookie_id}】WebSocket初始化完成！")
+
+                        # 初始化完成后才设置为已连接状态
+                        self._set_connection_state(ConnectionState.CONNECTED, "初始化完成，连接就绪")
+                        self.connection_failures = 0
+                        self.last_successful_connection = time.time()
 
                         # 启动心跳任务
                         logger.info(f"【{self.cookie_id}】启动心跳任务...")
@@ -5819,8 +6173,9 @@ class XianyuLive:
                                     continue
 
                                 # 处理其他消息
-                                # 使用异步任务处理消息，防止阻塞后续消息接收
-                                asyncio.create_task(self.handle_message(message_data, websocket))
+                                # 使用追踪的异步任务处理消息，防止阻塞后续消息接收
+                                # 并通过信号量控制并发数量，防止内存泄漏
+                                self._create_tracked_task(self._handle_message_with_semaphore(message_data, websocket))
 
                             except Exception as e:
                                 logger.error(f"处理消息出错: {self._safe_str(e)}")
@@ -5830,67 +6185,68 @@ class XianyuLive:
                     error_msg = self._safe_str(e)
                     self.connection_failures += 1
 
-                    logger.error(f"WebSocket连接异常 ({self.connection_failures}/{self.max_connection_failures}): {error_msg}")
+                    # 更新连接状态为重连中
+                    self._set_connection_state(ConnectionState.RECONNECTING, f"第{self.connection_failures}次失败")
+
+                    # 打印详细的错误信息
+                    import traceback
+                    error_type = type(e).__name__
+                    logger.error(f"【{self.cookie_id}】WebSocket连接异常 ({self.connection_failures}/{self.max_connection_failures})")
+                    logger.error(f"【{self.cookie_id}】异常类型: {error_type}")
+                    logger.error(f"【{self.cookie_id}】异常信息: {error_msg}")
+                    logger.debug(f"【{self.cookie_id}】异常堆栈:\n{traceback.format_exc()}")
 
                     # 检查是否超过最大失败次数
                     if self.connection_failures >= self.max_connection_failures:
-                        logger.error(f"【{self.cookie_id}】连续连接失败{self.max_connection_failures}次，暂停重试30分钟")
-                        await asyncio.sleep(1800)  # 暂停30分钟
+                        self._set_connection_state(ConnectionState.FAILED, f"连续失败{self.max_connection_failures}次")
+                        logger.error(f"【{self.cookie_id}】准备重启实例...")
                         self.connection_failures = 0  # 重置失败计数
-                        continue
+                        await self._restart_instance()  # 重启实例
+                        return  # 重启后退出当前连接循环
 
-                    # 根据错误类型和失败次数决定处理策略
-                    if "no close frame received or sent" in error_msg:
-                        logger.info(f"【{self.cookie_id}】检测到WebSocket连接意外断开，准备重新连接...")
-                        retry_delay = min(3 * self.connection_failures, 15)  # 递增重试间隔，最大15秒
-                    elif "Connection refused" in error_msg or "timeout" in error_msg.lower():
-                        logger.warning(f"【{self.cookie_id}】网络连接问题，延长重试间隔...")
-                        retry_delay = min(10 * self.connection_failures, 60)  # 递增重试间隔，最大60秒
-                    else:
-                        logger.warning(f"【{self.cookie_id}】未知WebSocket错误，使用默认重试间隔...")
-                        retry_delay = min(5 * self.connection_failures, 30)  # 递增重试间隔，最大30秒
+                    # 计算重试延迟
+                    retry_delay = self._calculate_retry_delay(error_msg)
+                    logger.warning(f"【{self.cookie_id}】将在 {retry_delay} 秒后重试连接...")
 
                     # 清空当前token，确保重新连接时会重新获取
                     if self.current_token:
-                        logger.info(f"【{self.cookie_id}】清空当前token，重新连接时将重新获取")
+                        logger.debug(f"【{self.cookie_id}】清空当前token，重新连接时将重新获取")
                         self.current_token = None
 
-                    # 取消所有任务并重置为None
-                    if self.heartbeat_task:
-                        self.heartbeat_task.cancel()
-                        self.heartbeat_task = None
-                    if self.token_refresh_task:
-                        self.token_refresh_task.cancel()
-                        self.token_refresh_task = None
-                    if self.cleanup_task:
-                        self.cleanup_task.cancel()
-                        self.cleanup_task = None
-                    if self.cookie_refresh_task:
-                        self.cookie_refresh_task.cancel()
-                        self.cookie_refresh_task = None
+                    # 使用统一的任务清理方法
+                    await self._cancel_background_tasks()
 
-                    logger.info(f"【{self.cookie_id}】等待 {retry_delay} 秒后重试连接...")
+                    # 等待后重试
                     await asyncio.sleep(retry_delay)
                     continue
         finally:
+            # 更新连接状态为已关闭
+            self._set_connection_state(ConnectionState.CLOSED, "程序退出")
+            
             # 清空当前token
             if self.current_token:
                 logger.info(f"【{self.cookie_id}】程序退出，清空当前token")
                 self.current_token = None
 
-            # 清理所有任务
-            if self.heartbeat_task:
-                self.heartbeat_task.cancel()
-            if self.token_refresh_task:
-                self.token_refresh_task.cancel()
-            if self.cleanup_task:
-                self.cleanup_task.cancel()
-            if self.cookie_refresh_task:
-                self.cookie_refresh_task.cancel()
-            await self.close_session()  # 确保关闭session
+            # 使用统一的任务清理方法
+            await self._cancel_background_tasks()
+            
+            # 清理所有后台任务
+            if self.background_tasks:
+                logger.info(f"【{self.cookie_id}】等待 {len(self.background_tasks)} 个后台任务完成...")
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*self.background_tasks, return_exceptions=True),
+                        timeout=10.0  # 10秒超时
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"【{self.cookie_id}】后台任务清理超时，强制继续")
+            
+            # 确保关闭session
+            await self.close_session()
 
             # 从全局实例字典中注销当前实例
-            # self._unregister_instance()
+            self._unregister_instance()
             logger.info(f"【{self.cookie_id}】XianyuLive主程序已完全退出")
 
     async def get_item_list_info(self, page_number=1, page_size=20, retry_count=0):

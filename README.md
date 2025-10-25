@@ -116,10 +116,12 @@ xianyu-auto-reply/
 │   ├── db_manager.py              # SQLite数据库管理，支持多用户数据隔离
 │   ├── cookie_manager.py          # 多账号Cookie管理和任务调度
 │   ├── ai_reply_engine.py         # AI智能回复引擎，支持多种AI模型
+│   ├── order_status_handler.py    # 订单状态处理和更新模块
 │   ├── file_log_collector.py      # 实时日志收集和管理系统
 │   ├── config.py                  # 全局配置文件管理器
 │   ├── usage_statistics.py        # 用户统计和数据分析模块
-│   ├── simple_stats_server.py     # 简单统计服务器
+│   ├── simple_stats_server.py     # 简单统计服务器（可选）
+│   ├── build_binary_module.py     # 二进制模块编译脚本（Nuitka编译工具）
 │   ├── secure_confirm_ultra.py    # 自动确认发货模块（多层加密保护）
 │   ├── secure_confirm_decrypted.py # 自动确认发货模块（解密版本）
 │   ├── secure_freeshipping_ultra.py # 自动免拼发货模块（多层加密保护）
@@ -198,6 +200,7 @@ xianyu-auto-reply/
 - ✅ 滑块验证模块增加授权期限验证机制，确保合规使用
 - ✅ Docker 构建优化，自动编译二进制模块，提升容器启动效率
 - ✅ 完善的错误处理和重试机制，提升系统稳定性
+- ✅ 修复滑块验证模块内存泄漏问题，浏览器资源正确释放
 
 **🛠️ 配置文件优化**
 - ✅ 完善 `.gitignore`，新增编译产物、浏览器缓存等规则
@@ -210,6 +213,16 @@ xianyu-auto-reply/
 - ✅ 添加 Nuitka 编译工具链（可选）
 - ✅ 详细的依赖说明和安装指南
 
+**🐛 Bug修复**
+- ✅ 修复浏览器资源泄漏问题，Docker容器RAM使用稳定
+- ✅ 优化历史记录存储，减少90%磁盘和内存占用
+- ✅ 添加析构函数确保资源释放
+
+## 🚀 云服务器推荐
+
+### 【划算云】国内外云服务器、全球CDN、挂机宝  www.hsykj.com
+
+
 ## 🚀 快速开始
 
 **⚡ 最快部署方式（推荐）**：使用预构建镜像，无需下载源码，一条命令即可启动！
@@ -221,11 +234,7 @@ xianyu-auto-reply/
 mkdir -p xianyu-auto-reply
 
 # 2. 一键启动容器
-docker run -d \
-  -p 8080:8080 \
-  -v $PWD/xianyu-auto-reply/:/app/data/ \
-  --name xianyu-auto-reply \
-  registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0.2
+docker run -d -p 8080:8080 --restart always  -v $PWD/xianyu-auto-reply/:/app/data/ --name xianyu-auto-reply  registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0.4
 
 # 3. 访问系统
 # http://localhost:8080
@@ -237,7 +246,7 @@ docker run -d \
 mkdir xianyu-auto-reply
 
 # 启动容器
-docker run -d -p 8080:8080 -v %cd%/xianyu-auto-reply/:/app/data/ --name xianyu-auto-reply registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0
+docker run -d -p 8080:8080 -v %cd%/xianyu-auto-reply/:/app/data/ --name xianyu-auto-reply registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0.4
 ```
 
 ### 方式二：从源码构建部署
